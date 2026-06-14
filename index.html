@@ -156,7 +156,6 @@
   <div class="logo">cs2<span>/</span>portfolio</div>
   <div class="topbar-actions">
     <span id="last-updated" style="font-size:11px;color:var(--muted)"></span>
-    <button class="btn" id="reset-btn" onclick="resetData()" title="Reset to defaults" style="color:var(--muted)">Reset data</button>
     <button class="btn" id="refresh-all-btn" onclick="refreshAllPrices()" title="Fetch all Steam prices">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh prices
@@ -348,15 +347,15 @@ function load() {
 }
 function defaultItems() {
   return [
-    { id: uid(), name: 'Fever Case',                     type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0.50, priceTs: null, img: 'fevercase' },
-    { id: uid(), name: 'Revolution Case',                type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0.25, priceTs: null, img: 'revolutioncase' },
-    { id: uid(), name: 'Prisma Case',                    type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 1.21, priceTs: null, img: 'prismacase' },
-    { id: uid(), name: 'Fracture Case',                  type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0.47, priceTs: null, img: 'fracturecase' },
-    { id: uid(), name: 'Kilowatt Case',                  type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0.19, priceTs: null, img: 'kilowattcase' },
-    { id: uid(), name: 'Operation Phoenix Weapon Case',  type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 3.23, priceTs: null, img: 'ophoenixcase' },
-    { id: uid(), name: 'Operation Breakout Weapon Case', type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 6.36, priceTs: null, img: 'opbreakoutcase' },
-    { id: uid(), name: 'Spectrum Case',                  type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 3.22, priceTs: null, img: 'spectrumcase' },
-    { id: uid(), name: 'Chroma 3 Case',                  type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 3.12, priceTs: null, img: 'chroma3case' },
+    { id: uid(), name: 'Fever Case',                     type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0, priceTs: null, img: 'fevercase' },
+    { id: uid(), name: 'Revolution Case',                type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0, priceTs: null, img: 'revolutioncase' },
+    { id: uid(), name: 'Prisma Case',                    type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 0, priceTs: null, img: 'prismacase' },
+    { id: uid(), name: 'Fracture Case',                  type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0, priceTs: null, img: 'fracturecase' },
+    { id: uid(), name: 'Kilowatt Case',                  type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0, priceTs: null, img: 'kilowattcase' },
+    { id: uid(), name: 'Operation Phoenix Weapon Case',  type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 0, priceTs: null, img: 'ophoenixcase' },
+    { id: uid(), name: 'Operation Breakout Weapon Case', type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 0, priceTs: null, img: 'opbreakoutcase' },
+    { id: uid(), name: 'Spectrum Case',                  type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 0, priceTs: null, img: 'spectrumcase' },
+    { id: uid(), name: 'Chroma 3 Case',                  type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 0, priceTs: null, img: 'chroma3case' },
   ];
 }
 function uid() { return Math.random().toString(36).slice(2, 9); }
@@ -524,36 +523,25 @@ function updatePrice(idx, val) {
   render();
 }
 
-// ─── Steam price fetch — direct from browser via allorigins CORS proxy ────────
-// Steam blocks server-side requests from Render's IPs, but browser requests work fine.
-// allorigins.win is a simple public CORS proxy that passes the request through.
-async function fetchSteamPrice(name) {
-  const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(name)}`;
-  const corsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(steamUrl)}`;
-  const res = await fetch(corsUrl);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const wrapper = await res.json();
-  const data = JSON.parse(wrapper.contents);
-  if (!data.success) throw new Error('not_found');
-  // Parse EUR string e.g. "0,49€" or "2,36 €"
-  const raw = data.lowest_price || data.median_price;
-  const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
-  return { price, raw, volume: data.volume };
-}
-
+// ─── Price fetch via Render proxy (now with browser headers to bypass Steam blocks)
 async function fetchOne(idx) {
   const item = items[idx];
   toast(`Fetching ${item.name}…`);
   try {
-    const { price, raw } = await fetchSteamPrice(item.name);
-    items[idx].marketPrice = price;
-    items[idx].priceTs = Date.now();
-    save();
-    render();
-    toast(`✓ ${item.name}: ${raw}`);
+    const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
+    const data = await res.json();
+    if (data.lowest_price != null) {
+      items[idx].marketPrice = data.lowest_price;
+      items[idx].priceTs = Date.now();
+      save();
+      render();
+      toast(`✓ ${item.name}: €${data.lowest_price.toFixed(2)}`);
+    } else {
+      toast(`Not found: ${item.name}`, true);
+      console.warn('Price response:', data);
+    }
   } catch (e) {
-    if (e.message === 'not_found') toast(`"${item.name}" not found on Steam market`, true);
-    else toast(`Fetch failed: ${e.message}`, true);
+    toast(`Error: ${e.message}`, true);
   }
 }
 
@@ -561,36 +549,43 @@ async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
   const uniqueNames = [...new Set(items.map(i => i.name))];
-  const delay = ms => new Promise(r => setTimeout(r, ms));
+  const secs = Math.round(uniqueNames.length * 1.5);
+  toast(`Fetching ${uniqueNames.length} prices (~${secs}s)…`);
 
-  let updated = 0, failed = 0;
-  for (let i = 0; i < uniqueNames.length; i++) {
-    const name = uniqueNames[i];
-    btn.textContent = `Fetching ${i + 1}/${uniqueNames.length}…`;
-    try {
-      const { price } = await fetchSteamPrice(name);
-      items.forEach(item => {
-        if (item.name === name) {
-          item.marketPrice = price;
-          item.priceTs = Date.now();
-        }
-      });
-      updated++;
-      save();
-      render();
-    } catch (e) {
-      console.warn(`${name}: ${e.message}`);
-      failed++;
-    }
-    if (i < uniqueNames.length - 1) await delay(1500); // Steam rate limit
+  try {
+    btn.textContent = 'Fetching prices…';
+    const res = await fetch(`${PROXY_URL}/prices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: uniqueNames })
+    });
+    if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
+    const data = await res.json();
+
+    let updated = 0, failed = [];
+    items.forEach(item => {
+      const r = data[item.name];
+      if (r && r.lowest_price != null) {
+        item.marketPrice = r.lowest_price;
+        item.priceTs = Date.now();
+        updated++;
+      } else if (r && r.error) {
+        failed.push(`${item.name}: ${r.error}`);
+      }
+    });
+    save();
+    render();
+    renderCharts();
+    if (failed.length) console.warn('Failed items:', failed);
+    toast(`✓ Updated ${updated}/${uniqueNames.length}${failed.length ? ` · ${failed.length} failed (check console)` : ''}`);
+  } catch (e) {
+    toast(`Proxy error: ${e.message} — try again in 30s`, true);
   }
 
-  renderCharts();
-  toast(`✓ Updated ${updated}/${uniqueNames.length}${failed ? ` (${failed} failed)` : ''}`);
-
-  // Also fetch icons for items missing them via Render proxy (search works fine)
+  // Fetch icons for items missing them
   const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
   if (missing.length) {
+    btn.textContent = 'Fetching icons…';
     try {
       const res = await fetch(`${PROXY_URL}/icons`, {
         method: 'POST',
