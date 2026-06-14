@@ -201,13 +201,17 @@
         <thead>
           <tr>
             <th onclick="sortBy('name')">Item <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('qty')">Qty <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('qty')" title="Quantity held">Held <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('buyPrice')">Buy price <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('invested')">Invested <span class="sort-icon">↕</span></th>
             <th>Steam price</th>
             <th onclick="sortBy('marketValue')">Value <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('roi')">ROI <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('profitLoss')">P/L <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('profitLoss')">Unrealised P/L <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('qtySold')" title="How many you've sold">Sold <span class="sort-icon">↕</span></th>
+            <th title="Average price you sold at">Sold at</th>
+            <th onclick="sortBy('realisedPL')" title="Profit/loss from items already sold">Realised P/L <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('totalPL')" title="Unrealised + Realised combined">Total P/L <span class="sort-icon">↕</span></th>
             <th></th>
           </tr>
         </thead>
@@ -364,7 +368,16 @@ function calcRow(item, withFee) {
   const marketValue = withFee ? rawValue * STEAM_FEE : rawValue;
   const profitLoss = marketValue - invested;
   const roi = invested > 0 ? (profitLoss / invested) * 100 : 0;
-  return { ...item, invested, marketValue, profitLoss, roi };
+
+  // Sold calculations
+  const qtySold = item.qtySold || 0;
+  const soldAt = item.soldAt || 0; // avg sell price per unit
+  const soldRevenue = withFee ? qtySold * soldAt * STEAM_FEE : qtySold * soldAt;
+  const soldCost = qtySold * item.buyPrice;
+  const realisedPL = soldRevenue - soldCost;
+  const totalPL = profitLoss + realisedPL;
+
+  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldRevenue, realisedPL, totalPL };
 }
 
 // ─── Format ───────────────────────────────────────────────────────────────────
@@ -408,20 +421,25 @@ function render() {
   const totalQty = allRows.reduce((s, r) => s + r.qty, 0);
   const winners = allRows.filter(r => r.roi >= 0).length;
 
+  const totalRealised = allRows.reduce((s, r) => s + r.realisedPL, 0);
+  const grandTotalPL = totalPL + totalRealised;
+
   const mg = document.getElementById('metrics-grid');
   mg.innerHTML = `
     <div class="metric-card"><div class="metric-label">Invested</div><div class="metric-value mono">${fmtEur(totalInvested)}</div></div>
     <div class="metric-card"><div class="metric-label">Market value</div><div class="metric-value mono">${fmtEur(totalValue)}</div><div class="metric-sub">${withFee ? 'after Steam fee' : 'before fee'}</div></div>
-    <div class="metric-card"><div class="metric-label">Total P/L</div><div class="metric-value mono ${totalPL >= 0 ? 'green' : 'red'}">${fmtPL(totalPL)}</div></div>
+    <div class="metric-card"><div class="metric-label">Unrealised P/L</div><div class="metric-value mono ${totalPL >= 0 ? 'green' : 'red'}">${fmtPL(totalPL)}</div><div class="metric-sub">holdings at market</div></div>
+    <div class="metric-card"><div class="metric-label">Realised P/L</div><div class="metric-value mono ${totalRealised >= 0 ? 'green' : 'red'}">${fmtPL(totalRealised)}</div><div class="metric-sub">from sold items</div></div>
+    <div class="metric-card"><div class="metric-label">Total P/L</div><div class="metric-value mono ${grandTotalPL >= 0 ? 'green' : 'red'}">${fmtPL(grandTotalPL)}</div><div class="metric-sub">realised + unrealised</div></div>
     <div class="metric-card"><div class="metric-label">Portfolio ROI</div><div class="metric-value mono ${totalRoi >= 0 ? 'green' : 'red'}">${fmtRoi(totalRoi)}</div></div>
-    <div class="metric-card"><div class="metric-label">Total items</div><div class="metric-value mono">${totalQty}</div><div class="metric-sub">${items.length} unique</div></div>
+    <div class="metric-card"><div class="metric-label">Holdings</div><div class="metric-value mono">${totalQty}</div><div class="metric-sub">${items.length} unique</div></div>
     <div class="metric-card"><div class="metric-label">Winners</div><div class="metric-value mono accent">${winners}<span style="font-size:14px;color:var(--muted)">/${items.length}</span></div></div>
   `;
 
   // Table
   const tbody = document.getElementById('holdings-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
   } else {
     tbody.innerHTML = rows.map(r => {
       const origIdx = items.findIndex(i => i.id === r.id);
@@ -445,6 +463,10 @@ function render() {
         <td class="mono">${fmtEur(r.marketValue)}</td>
         <td><span class="badge ${r.roi >= 0 ? 'badge-green' : 'badge-red'}">${fmtRoi(r.roi)}</span></td>
         <td class="mono ${r.profitLoss >= 0 ? 'green' : 'red'}" style="font-weight:500">${fmtPL(r.profitLoss)}</td>
+        <td><input class="price-input" type="number" step="1" min="0" value="${r.qtySold}" onchange="updateSold(${origIdx}, 'qtySold', this.value)" title="How many you've sold" style="width:55px" /></td>
+        <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Average sell price per unit" /></td>
+        <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="mono ${r.totalPL >= 0 ? 'green' : 'red'}" style="font-weight:600">${fmtPL(r.totalPL)}</td>
         <td>
           <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete">✕</button>
         </td>
@@ -483,6 +505,12 @@ function sortBy(key) {
 }
 
 // ─── Price updates ────────────────────────────────────────────────────────────
+function updateSold(idx, field, val) {
+  items[idx][field] = parseFloat(val) || 0;
+  save();
+  render();
+}
+
 function updateBuyPrice(idx, val) {
   items[idx].buyPrice = parseFloat(val) || 0;
   save();
