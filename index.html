@@ -520,14 +520,18 @@ async function fetchOne(idx) {
 async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
-  btn.textContent = 'Fetching…';
-  toast(`Fetching ${items.length} items (this takes ~${items.length * 1.2}s)…`);
+  const secs = Math.round(items.length * 1.2);
+  toast(`Fetching ${items.length} prices (~${secs}s)…`);
+  btn.textContent = 'Fetching prices…';
+
+  // Step 1: fetch prices
   try {
     const res = await fetch(`${PROXY_URL}/prices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ names: items.map(i => i.name) })
+      body: JSON.stringify({ names: [...new Set(items.map(i => i.name))] }) // dedupe names
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     let updated = 0;
     items.forEach(item => {
@@ -535,17 +539,41 @@ async function refreshAllPrices() {
       if (r && r.lowest_price != null) {
         item.marketPrice = r.lowest_price;
         item.priceTs = Date.now();
-        if (r.icon && !item.icon) item.icon = r.icon;
         updated++;
+      } else if (r && r.error) {
+        console.warn(`${item.name}: ${r.error}`);
       }
     });
     save();
     render();
     renderCharts();
-    toast(`Updated ${updated}/${items.length} prices`);
+    toast(`✓ Updated ${updated}/${items.length} prices`);
   } catch (e) {
-    toast('Could not reach price proxy — check your Render URL', true);
+    toast('Could not reach proxy — is Render awake? Try again in 30s', true);
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh prices`;
+    return;
   }
+
+  // Step 2: fetch icons for items that don't have one yet
+  const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
+  if (missing.length) {
+    btn.textContent = 'Fetching icons…';
+    try {
+      const res = await fetch(`${PROXY_URL}/icons`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: missing })
+      });
+      const icons = await res.json();
+      items.forEach(item => {
+        if (!item.icon && icons[item.name]) item.icon = icons[item.name];
+      });
+      save();
+      render();
+    } catch {}
+  }
+
   btn.disabled = false;
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh prices`;
 }
