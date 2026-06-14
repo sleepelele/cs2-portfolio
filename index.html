@@ -300,8 +300,9 @@ const ITEM_IMAGES = {
   'Chroma 3 Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSoQ-3VetrURuZmH7I4-TdkRmN5mWQ/75fx75f',
 };
 // For unknown items, fall back to Steam market icon API
-function getItemImg(name) {
-  return ITEM_IMAGES[name] || `https://steamcommunity.com/market/image/${encodeURIComponent(name)}/75fx75f`;
+function getItemImg(name, icon) {
+  if (icon) return icon;
+  return ITEM_IMAGES[name] || null;
 }
 
 // ─── Correct CS2 item names (exact Steam market names) ───────────────────────
@@ -426,7 +427,7 @@ function render() {
       const origIdx = items.findIndex(i => i.id === r.id);
       const stale = !r.priceTs;
       const typeLabel = r.type !== 'Case' ? `<span class="type-badge">${r.type}</span>` : '';
-      const imgUrl = getItemImg(r.name);
+      const imgUrl = getItemImg(r.name, r.icon);
       const imgHtml = imgUrl ? `<img src="${imgUrl}" width="32" height="32" style="border-radius:4px;margin-right:8px;vertical-align:middle;object-fit:contain" onerror="this.style.display='none'" />` : '';
       return `<tr>
         <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
@@ -504,6 +505,7 @@ async function fetchOne(idx) {
     if (data.lowest_price != null) {
       items[idx].marketPrice = data.lowest_price;
       items[idx].priceTs = Date.now();
+      if (data.icon && !items[idx].icon) items[idx].icon = data.icon;
       save();
       render();
       toast(`${item.name}: €${data.lowest_price.toFixed(2)}`);
@@ -533,6 +535,7 @@ async function refreshAllPrices() {
       if (r && r.lowest_price != null) {
         item.marketPrice = r.lowest_price;
         item.priceTs = Date.now();
+        if (r.icon && !item.icon) item.icon = r.icon;
         updated++;
       }
     });
@@ -550,6 +553,7 @@ async function refreshAllPrices() {
 // ─── CRUD ──────────────────────────────────────────────────────────────────────
 function openAddModal() {
   editIdx = null;
+  pendingIcon = null;
   document.getElementById('modal-title').textContent = 'Add item';
   document.getElementById('modal-save-btn').textContent = 'Add item';
   document.getElementById('modal-name').value = '';
@@ -557,6 +561,8 @@ function openAddModal() {
   document.getElementById('modal-buy').value = '';
   document.getElementById('modal-market').value = '';
   document.getElementById('modal-type').value = 'Case';
+  document.getElementById('search-hint').textContent = 'Start typing — results appear from Steam market';
+  document.getElementById('search-dropdown').style.display = 'none';
   document.getElementById('modal-overlay').classList.remove('hidden');
   document.getElementById('modal-name').focus();
 }
@@ -578,7 +584,7 @@ function saveItem() {
     items[editIdx] = { ...items[editIdx], name, qty, buyPrice, marketPrice, type };
   } else {
     // Always add as new row — allows tracking same item at different buy prices
-    items.push({ id: uid(), name, type, qty, buyPrice, marketPrice, priceTs: null });
+    items.push({ id: uid(), name, type, qty, buyPrice, marketPrice, priceTs: null, icon: pendingIcon });
   }
   save();
   render();
@@ -749,11 +755,14 @@ function renderDropdown() {
   `).join('');
 }
 
+let pendingIcon = null; // icon URL from search selection
+
 function selectSearchItem(i) {
   const item = searchResults[i];
   document.getElementById('modal-name').value = item.name;
   document.getElementById('search-dropdown').style.display = 'none';
   document.getElementById('search-hint').textContent = '✓ Selected from Steam market';
+  pendingIcon = item.icon || null;
   // Auto-detect type
   const n = item.name.toLowerCase();
   if (n.includes('case') || n.includes('capsule') || n.includes('package')) {
