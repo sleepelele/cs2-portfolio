@@ -140,6 +140,14 @@
   tr:hover .delete-btn { opacity: 1; }
   .delete-btn:hover { background: var(--red-dim); }
   .type-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: var(--blue-dim); color: var(--blue); font-family: var(--mono); margin-left: 6px; vertical-align: middle; }
+  .search-item { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; color:var(--text); border-bottom:1px solid var(--border); }
+  .search-item:last-child { border-bottom:none; }
+  .search-item:hover, .search-item.selected { background:rgba(255,255,255,0.06); }
+  .search-item img { width:32px; height:32px; object-fit:contain; border-radius:3px; flex-shrink:0; }
+  .search-item-name { flex:1; }
+  .search-item-price { font-family:var(--mono); font-size:12px; color:var(--muted); }
+  .search-loading { padding:12px; text-align:center; color:var(--muted); font-size:12px; }
+
 </style>
 </head>
 <body>
@@ -231,10 +239,11 @@
 <div class="modal-overlay hidden" id="modal-overlay" onclick="closeModalOnBg(event)">
   <div class="modal">
     <h3 id="modal-title">Add item</h3>
-    <div class="form-group">
-      <label class="form-label">Item name (exact Steam market name)</label>
-      <input class="form-input" id="modal-name" type="text" placeholder="e.g. Operation Fracture Case" />
-      <div class="form-hint">Use the exact name from steamcommunity.com/market</div>
+    <div class="form-group" style="position:relative">
+      <label class="form-label">Item name</label>
+      <input class="form-input" id="modal-name" type="text" placeholder="Start typing to search Steam market…" autocomplete="off" oninput="searchSteamItems(this.value)" onkeydown="handleSearchKey(event)" />
+      <div id="search-dropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius-sm);z-index:300;max-height:260px;overflow-y:auto;margin-top:2px;"></div>
+      <div class="form-hint" id="search-hint">Start typing — results appear from Steam market</div>
     </div>
     <div class="form-row">
       <div class="form-group">
@@ -568,6 +577,7 @@ function saveItem() {
   if (editIdx !== null) {
     items[editIdx] = { ...items[editIdx], name, qty, buyPrice, marketPrice, type };
   } else {
+    // Always add as new row — allows tracking same item at different buy prices
     items.push({ id: uid(), name, type, qty, buyPrice, marketPrice, priceTs: null });
   }
   save();
@@ -688,6 +698,100 @@ function toast(msg, isErr) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
+
+// ─── Steam search autocomplete ────────────────────────────────────────────────
+let searchTimer = null;
+let searchResults = [];
+let selectedIdx = -1;
+
+function searchSteamItems(q) {
+  const dropdown = document.getElementById('search-dropdown');
+  const hint = document.getElementById('search-hint');
+  clearTimeout(searchTimer);
+  selectedIdx = -1;
+
+  if (q.length < 2) {
+    dropdown.style.display = 'none';
+    hint.textContent = 'Start typing — results appear from Steam market';
+    return;
+  }
+
+  hint.textContent = 'Searching…';
+  dropdown.style.display = 'block';
+  dropdown.innerHTML = '<div class="search-loading">Searching Steam market…</div>';
+
+  searchTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`${PROXY_URL}/search?q=${encodeURIComponent(q)}`);
+      searchResults = await res.json();
+      renderDropdown();
+      hint.textContent = searchResults.length ? `${searchResults.length} results — click to select` : 'No results found';
+    } catch {
+      dropdown.innerHTML = '<div class="search-loading">Could not reach proxy</div>';
+      hint.textContent = 'Search unavailable — type name manually';
+    }
+  }, 350);
+}
+
+function renderDropdown() {
+  const dropdown = document.getElementById('search-dropdown');
+  if (!searchResults.length) {
+    dropdown.innerHTML = '<div class="search-loading">No results</div>';
+    return;
+  }
+  dropdown.innerHTML = searchResults.map((item, i) => `
+    <div class="search-item${i === selectedIdx ? ' selected' : ''}" onclick="selectSearchItem(${i})">
+      ${item.icon ? `<img src="${item.icon}" onerror="this.style.display='none'" />` : '<div style="width:32px;height:32px;background:var(--surface);border-radius:3px;flex-shrink:0"></div>'}
+      <span class="search-item-name">${item.name}</span>
+      ${item.lowest_price ? `<span class="search-item-price">${item.lowest_price}</span>` : ''}
+    </div>
+  `).join('');
+}
+
+function selectSearchItem(i) {
+  const item = searchResults[i];
+  document.getElementById('modal-name').value = item.name;
+  document.getElementById('search-dropdown').style.display = 'none';
+  document.getElementById('search-hint').textContent = '✓ Selected from Steam market';
+  // Auto-detect type
+  const n = item.name.toLowerCase();
+  if (n.includes('case') || n.includes('capsule') || n.includes('package')) {
+    document.getElementById('modal-type').value = 'Case';
+  } else if (n.includes('sticker') || n.includes('patch') || n.includes('graffiti') || n.includes('pin') || n.includes('charm')) {
+    document.getElementById('modal-type').value = 'Other';
+  } else {
+    document.getElementById('modal-type').value = 'Skin';
+  }
+  document.getElementById('modal-buy').focus();
+}
+
+function handleSearchKey(e) {
+  const dropdown = document.getElementById('search-dropdown');
+  if (dropdown.style.display === 'none' || !searchResults.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectedIdx = Math.min(selectedIdx + 1, searchResults.length - 1);
+    renderDropdown();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectedIdx = Math.max(selectedIdx - 1, 0);
+    renderDropdown();
+  } else if (e.key === 'Enter' && selectedIdx >= 0) {
+    e.preventDefault();
+    selectSearchItem(selectedIdx);
+  } else if (e.key === 'Escape') {
+    dropdown.style.display = 'none';
+  }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!e.target.closest('#modal-overlay')) return;
+  if (!e.target.closest('.form-group')) {
+    document.getElementById('search-dropdown').style.display = 'none';
+  }
+});
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 function resetData() {
