@@ -148,6 +148,7 @@
   <div class="logo">cs2<span>/</span>portfolio</div>
   <div class="topbar-actions">
     <span id="last-updated" style="font-size:11px;color:var(--muted)"></span>
+    <button class="btn" id="reset-btn" onclick="resetData()" title="Reset to defaults" style="color:var(--muted)">Reset data</button>
     <button class="btn" id="refresh-all-btn" onclick="refreshAllPrices()" title="Fetch all Steam prices">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh prices
@@ -276,6 +277,24 @@ const PROXY_URL = 'https://cs2-price-proxy.onrender.com';
 const STEAM_FEE = 0.85;
 const LS_KEY = 'cs2_portfolio_v2';
 
+// ─── Item image helper (uses Steam market icon via name) ──────────────────────
+// Images are fetched from the Steam market listing page icon
+const ITEM_IMAGES = {
+  'Fever Case':                    'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9_HmGz5vJqBVB-ZDoMdqRfbL5mWQ/75fx75f',
+  'Revolution Case':               'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9YjnFLtrUMNmPsMqhZ2D7I4-Tdl9FmN5mWQ/75fx75f',
+  'Prisma Case':                   'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp0u3VvkrUJsYzqPIoKPdVFDvY15vWqQ/75fx75f',
+  'Fracture Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9r3FPmrEJsYzrPIoKPdVHDvY15vWqQ/75fx75f',
+  'Kilowatt Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9bnlW-ukI9Y2uIoKPdVFzuY15vWqQ/75fx75f',
+  'Operation Phoenix Weapon Case': 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9Ri3lPkqEthZ2D7I4-TdkRmN5mWQ/75fx75f',
+  'Operation Breakout Weapon Case':'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9Mm3lak-EM-Z2H7I4-TdlFmN5mWQ/75fx75f',
+  'Spectrum Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT8di3lGk-UJpZW3I4-TdkNmN5mWQ/75fx75f',
+  'Chroma 3 Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSoQ-3VetrURuZmH7I4-TdkRmN5mWQ/75fx75f',
+};
+// For unknown items, fall back to Steam market icon API
+function getItemImg(name) {
+  return ITEM_IMAGES[name] || `https://steamcommunity.com/market/image/${encodeURIComponent(name)}/75fx75f`;
+}
+
 // ─── Correct CS2 item names (exact Steam market names) ───────────────────────
 const NAME_CORRECTIONS = {
   'fever case': 'Fever Case',
@@ -283,8 +302,9 @@ const NAME_CORRECTIONS = {
   'prism case': 'Prisma Case',
   'fracture case': 'Fracture Case',
   'kilowatt case': 'Kilowatt Case',
-  'phoenix case': 'Operation Phoenix Case',
-  'operation phoenix case': 'Operation Phoenix Case',
+  'phoenix case': 'Operation Phoenix Weapon Case',
+  'operation phoenix case': 'Operation Phoenix Weapon Case',
+  'operation phoenix weapon case': 'Operation Phoenix Weapon Case',
   'operation breakout case': 'Operation Breakout Weapon Case',
   'breakout case': 'Operation Breakout Weapon Case',
   'spectrum case': 'Spectrum Case',
@@ -314,15 +334,15 @@ function load() {
 }
 function defaultItems() {
   return [
-    { id: uid(), name: 'Fever Case',                      type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0.50, priceTs: null },
-    { id: uid(), name: 'Revolution Case',                 type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0.25, priceTs: null },
-    { id: uid(), name: 'Prisma Case',                     type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 1.21, priceTs: null },
-    { id: uid(), name: 'Fracture Case',                   type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0.47, priceTs: null },
-    { id: uid(), name: 'Kilowatt Case',                   type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0.19, priceTs: null },
-    { id: uid(), name: 'Operation Phoenix Case',          type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 3.23, priceTs: null },
-    { id: uid(), name: 'Operation Breakout Weapon Case',  type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 6.36, priceTs: null },
-    { id: uid(), name: 'Spectrum Case',                   type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 3.22, priceTs: null },
-    { id: uid(), name: 'Chroma 3 Case',                   type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 3.12, priceTs: null },
+    { id: uid(), name: 'Fever Case',                     type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0.50, priceTs: null, img: 'fevercase' },
+    { id: uid(), name: 'Revolution Case',                type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0.25, priceTs: null, img: 'revolutioncase' },
+    { id: uid(), name: 'Prisma Case',                    type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 1.21, priceTs: null, img: 'prismacase' },
+    { id: uid(), name: 'Fracture Case',                  type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0.47, priceTs: null, img: 'fracturecase' },
+    { id: uid(), name: 'Kilowatt Case',                  type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0.19, priceTs: null, img: 'kilowattcase' },
+    { id: uid(), name: 'Operation Phoenix Weapon Case',  type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 3.23, priceTs: null, img: 'ophoenixcase' },
+    { id: uid(), name: 'Operation Breakout Weapon Case', type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 6.36, priceTs: null, img: 'opbreakoutcase' },
+    { id: uid(), name: 'Spectrum Case',                  type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 3.22, priceTs: null, img: 'spectrumcase' },
+    { id: uid(), name: 'Chroma 3 Case',                  type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 3.12, priceTs: null, img: 'chroma3case' },
   ];
 }
 function uid() { return Math.random().toString(36).slice(2, 9); }
@@ -397,8 +417,10 @@ function render() {
       const origIdx = items.findIndex(i => i.id === r.id);
       const stale = !r.priceTs;
       const typeLabel = r.type !== 'Case' ? `<span class="type-badge">${r.type}</span>` : '';
+      const imgUrl = getItemImg(r.name);
+      const imgHtml = imgUrl ? `<img src="${imgUrl}" width="32" height="32" style="border-radius:4px;margin-right:8px;vertical-align:middle;object-fit:contain" onerror="this.style.display='none'" />` : '';
       return `<tr>
-        <td class="item-name">${r.name}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></td>
+        <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
         <td class="mono">${r.qty}</td>
         <td class="mono">${fmtEur(r.buyPrice)}</td>
         <td class="mono">${fmtEur(r.invested)}</td>
@@ -662,6 +684,15 @@ function toast(msg, isErr) {
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
+function resetData() {
+  if (!confirm('Reset all data to defaults? This will clear any items you added or edited.')) return;
+  localStorage.removeItem(LS_KEY);
+  items = defaultItems();
+  save();
+  render();
+  toast('Data reset to defaults');
+}
+
 load();
 render();
 </script>
