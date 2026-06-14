@@ -37,7 +37,7 @@
   .logo { font-family: var(--mono); font-size: 15px; font-weight: 500; color: var(--accent); letter-spacing: 0.02em; }
   .logo span { color: var(--muted); font-weight: 400; }
   .topbar-actions { display: flex; gap: 8px; align-items: center; }
-  .main { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+  .main { max-width: 1800px; margin: 0 auto; padding: 24px 32px; }
 
   /* Buttons */
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: var(--radius-sm); font-size: 13px; font-family: var(--sans); cursor: pointer; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
@@ -524,69 +524,73 @@ function updatePrice(idx, val) {
   render();
 }
 
+// ─── Steam price fetch — direct from browser via allorigins CORS proxy ────────
+// Steam blocks server-side requests from Render's IPs, but browser requests work fine.
+// allorigins.win is a simple public CORS proxy that passes the request through.
+async function fetchSteamPrice(name) {
+  const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(name)}`;
+  const corsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(steamUrl)}`;
+  const res = await fetch(corsUrl);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const wrapper = await res.json();
+  const data = JSON.parse(wrapper.contents);
+  if (!data.success) throw new Error('not_found');
+  // Parse EUR string e.g. "0,49€" or "2,36 €"
+  const raw = data.lowest_price || data.median_price;
+  const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
+  return { price, raw, volume: data.volume };
+}
+
 async function fetchOne(idx) {
   const item = items[idx];
   toast(`Fetching ${item.name}…`);
   try {
-    const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
-    const data = await res.json();
-    if (data.lowest_price != null) {
-      items[idx].marketPrice = data.lowest_price;
-      items[idx].priceTs = Date.now();
-      if (data.icon && !items[idx].icon) items[idx].icon = data.icon;
-      save();
-      render();
-      toast(`${item.name}: €${data.lowest_price.toFixed(2)}`);
-    } else {
-      toast('Not found on Steam market', true);
-    }
+    const { price, raw } = await fetchSteamPrice(item.name);
+    items[idx].marketPrice = price;
+    items[idx].priceTs = Date.now();
+    save();
+    render();
+    toast(`✓ ${item.name}: ${raw}`);
   } catch (e) {
-    toast('Could not reach price proxy', true);
+    if (e.message === 'not_found') toast(`"${item.name}" not found on Steam market`, true);
+    else toast(`Fetch failed: ${e.message}`, true);
   }
 }
 
 async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
-  const secs = Math.round(items.length * 1.2);
-  toast(`Fetching ${items.length} prices (~${secs}s)…`);
-  btn.textContent = 'Fetching prices…';
+  const uniqueNames = [...new Set(items.map(i => i.name))];
+  const delay = ms => new Promise(r => setTimeout(r, ms));
 
-  // Step 1: fetch prices
-  try {
-    const res = await fetch(`${PROXY_URL}/prices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ names: [...new Set(items.map(i => i.name))] }) // dedupe names
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    let updated = 0;
-    items.forEach(item => {
-      const r = data[item.name];
-      if (r && r.lowest_price != null) {
-        item.marketPrice = r.lowest_price;
-        item.priceTs = Date.now();
-        updated++;
-      } else if (r && r.error) {
-        console.warn(`${item.name}: ${r.error}`);
-      }
-    });
-    save();
-    render();
-    renderCharts();
-    toast(`✓ Updated ${updated}/${items.length} prices`);
-  } catch (e) {
-    toast('Could not reach proxy — is Render awake? Try again in 30s', true);
-    btn.disabled = false;
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh prices`;
-    return;
+  let updated = 0, failed = 0;
+  for (let i = 0; i < uniqueNames.length; i++) {
+    const name = uniqueNames[i];
+    btn.textContent = `Fetching ${i + 1}/${uniqueNames.length}…`;
+    try {
+      const { price } = await fetchSteamPrice(name);
+      items.forEach(item => {
+        if (item.name === name) {
+          item.marketPrice = price;
+          item.priceTs = Date.now();
+        }
+      });
+      updated++;
+      save();
+      render();
+    } catch (e) {
+      console.warn(`${name}: ${e.message}`);
+      failed++;
+    }
+    if (i < uniqueNames.length - 1) await delay(1500); // Steam rate limit
   }
 
-  // Step 2: fetch icons for items that don't have one yet
+  renderCharts();
+  toast(`✓ Updated ${updated}/${uniqueNames.length}${failed ? ` (${failed} failed)` : ''}`);
+
+  // Also fetch icons for items missing them via Render proxy (search works fine)
   const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
   if (missing.length) {
-    btn.textContent = 'Fetching icons…';
     try {
       const res = await fetch(`${PROXY_URL}/icons`, {
         method: 'POST',
@@ -594,11 +598,8 @@ async function refreshAllPrices() {
         body: JSON.stringify({ names: missing })
       });
       const icons = await res.json();
-      items.forEach(item => {
-        if (!item.icon && icons[item.name]) item.icon = icons[item.name];
-      });
-      save();
-      render();
+      items.forEach(item => { if (!item.icon && icons[item.name]) item.icon = icons[item.name]; });
+      save(); render();
     } catch {}
   }
 
