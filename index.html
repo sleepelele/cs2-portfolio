@@ -564,11 +564,13 @@ function calcRow(item, withFee) {
   const soldCost = qtySold * item.buyPrice;
   const realisedPL = soldRevenue - soldCost;
 
-  // Net P/L = unrealised holdings + realised from sales
-  // For unrealised: if selling on float, no fee on remaining holdings too
-  const unrealisedForNet = soldAtFloat > 0
-    ? item.qty * item.marketPrice - item.qty * item.buyPrice  // no fee for float sellers
-    : profitLoss; // with fee for steam sellers
+  // Net P/L = realised gains from sold items + unrealised value of remaining holdings
+  const remainingQty = Math.max(0, item.qty - qtySold);
+  const remainingInvested = remainingQty * item.buyPrice;
+  const remainingValue = soldAtFloat > 0
+    ? remainingQty * item.marketPrice          // float seller — no fee on remaining
+    : remainingQty * item.marketPrice * (withFee ? STEAM_FEE : 1); // steam seller
+  const unrealisedForNet = remainingValue - remainingInvested;
   const netPL = unrealisedForNet + realisedPL;
   const totalPL = profitLoss + realisedPL;
 
