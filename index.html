@@ -510,36 +510,45 @@ function updatePrice(idx, val) {
   render();
 }
 
-// ─── Single price fetch — direct from browser to Steam (EUR, no conversion needed)
-// Steam allows browser requests to priceoverview, only blocks server IPs
+// ─── Single price fetch via proxy ────────────────────────────────────────────
 async function fetchOne(idx) {
   const item = items[idx];
   toast(`Fetching ${item.name}…`);
   try {
-    // Call Steam directly from the browser — currency=3 is EUR
-    const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(item.name)}`;
-    const res = await fetch(steamUrl);
-    if (!res.ok) throw new Error(`Steam returned ${res.status}`);
+    const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
+    if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
     const data = await res.json();
-    if (!data.success) throw new Error('not_found');
-
-    // Parse EUR string e.g. "0,78€" or "10,63 €"
-    const raw = data.lowest_price || data.median_price;
-    const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
-
-    if (!isNaN(price)) {
+    const eurRate = await getEurRate();
+    let price = null;
+    if (data.lowest_price != null) price = data.lowest_price;
+    else if (data.lowest_price_usd != null) price = parseFloat((data.lowest_price_usd * eurRate).toFixed(2));
+    if (price != null) {
       items[idx].marketPrice = price;
       items[idx].priceTs = Date.now();
-      items[idx].priceSource = 'steam_eur_direct';
-      save();
-      render();
-      toast(`✓ ${item.name}: €${price.toFixed(2)} (Steam EUR)`);
+      items[idx].priceSource = data.source || 'proxy';
+      save(); render();
+      toast(`✓ ${item.name}: €${price.toFixed(2)}`);
     } else {
-      throw new Error('Could not parse price: ' + raw);
+      toast(`Not found: ${item.name}`, true);
     }
   } catch (e) {
-    if (e.message === 'not_found') toast(`"${item.name}" not found on Steam market`, true);
-    else toast(`Fetch failed: ${e.message}`, true);
+    toast(`Error: ${e.message}`, true);
+  }
+}
+
+// ─── EUR/USD rate — fetched live from exchangerate.host (free, no key) ─────────
+let cachedEurRate = null;
+let eurRateTs = 0;
+async function getEurRate() {
+  if (cachedEurRate && Date.now() - eurRateTs < 60 * 60 * 1000) return cachedEurRate; // cache 1hr
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR');
+    const data = await res.json();
+    cachedEurRate = data.rates.EUR;
+    eurRateTs = Date.now();
+    return cachedEurRate;
+  } catch {
+    return cachedEurRate || 0.92; // fallback if fetch fails
   }
 }
 
@@ -547,57 +556,50 @@ async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
   const uniqueNames = [...new Set(items.map(i => i.name))];
-  const secs = Math.round(uniqueNames.length * 1.5);
-  const delayMs = ms => new Promise(r => setTimeout(r, ms));
+  toast(`Fetching ${uniqueNames.length} prices…`);
+  btn.textContent = 'Fetching prices…';
 
-  toast(`Fetching ${uniqueNames.length} prices from Steam (~${secs}s)…`);
+  try {
+    // Get live EUR rate first
+    const eurRate = await getEurRate();
 
-  // Call Steam directly from browser — exact EUR, no conversion
-  // Steam allows browser requests, just rate limits to ~1/sec
-  let updated = 0, failed = [];
-  for (let i = 0; i < uniqueNames.length; i++) {
-    const name = uniqueNames[i];
-    btn.textContent = `Fetching ${i + 1}/${uniqueNames.length}…`;
-    try {
-      const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(name)}`;
-      const res = await fetch(steamUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!data.success) throw new Error('not_found');
-      const raw = data.lowest_price || data.median_price;
-      const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
-      if (!isNaN(price)) {
-        items.forEach(item => {
-          if (item.name === name) {
-            item.marketPrice = price;
-            item.priceTs = Date.now();
-            item.priceSource = 'steam_eur_direct';
-          }
-        });
+    const res = await fetch(`${PROXY_URL}/prices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: uniqueNames })
+    });
+    if (!res.ok) throw new Error(`Proxy ${res.status}`);
+    const data = await res.json();
+
+    let updated = 0, failed = [];
+    items.forEach(item => {
+      const r = data[item.name];
+      if (r && r.lowest_price != null) {
+        item.marketPrice = r.lowest_price;
+        item.priceTs = Date.now();
+        item.priceSource = r.source || 'steam_eur';
         updated++;
-        save();
-        render();
+      } else if (r && r.lowest_price_usd != null) {
+        item.marketPrice = parseFloat((r.lowest_price_usd * eurRate).toFixed(2));
+        item.priceTs = Date.now();
+        item.priceSource = `${r.source || 'steamapis'} (€${eurRate.toFixed(4)}/USD)`;
+        updated++;
+      } else if (r && r.error) {
+        failed.push(`${item.name}: ${r.error}`);
       }
-    } catch (e) {
-      failed.push(`${name}: ${e.message}`);
-      console.warn(`Failed: ${name}`, e.message);
-    }
-    if (i < uniqueNames.length - 1) await delayMs(1500);
+    });
+    save(); render(); renderCharts();
+    toast(`✓ ${updated}/${uniqueNames.length} updated at €1=$${(1/eurRate).toFixed(3)}${failed.length ? ` · ${failed.length} failed` : ''}`);
+  } catch (e) {
+    toast(`Proxy error: ${e.message}`, true);
   }
 
-  renderCharts();
-  toast(`✓ ${updated}/${uniqueNames.length} updated (EUR direct from Steam)${failed.length ? ` · ${failed.length} failed` : ''}`);
-
-  // Fetch icons for items missing them via proxy
+  // Icons
   const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
   if (missing.length) {
     btn.textContent = 'Fetching icons…';
     try {
-      const res = await fetch(`${PROXY_URL}/icons`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ names: missing })
-      });
+      const res = await fetch(`${PROXY_URL}/icons`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names: missing }) });
       const icons = await res.json();
       items.forEach(item => { if (!item.icon && icons[item.name]) item.icon = icons[item.name]; });
       save(); render();
