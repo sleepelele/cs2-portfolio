@@ -221,6 +221,10 @@
         <input type="checkbox" id="free-drop-filter" onchange="render()" />
         Free drops only
       </label>
+      <label class="toggle-fee" style="margin-left:0">
+        <input type="checkbox" id="sold-filter" onchange="render()" />
+        Sold items only
+      </label>
       <label class="toggle-fee">
         <input type="checkbox" id="fee-toggle" checked onchange="render()" />
         Subtract Steam 15% fee
@@ -551,9 +555,9 @@ function calcRow(item, withFee) {
   const roi = invested > 0 ? (profitLoss / invested) * 100 : 0;
 
   // Sold calculations — Steam (with fee) and Float/3rd party (no fee)
-  const qtySold = item.qtySold || 0;
-  const soldAt = item.soldAt || 0;           // Steam market price
-  const soldAtFloat = item.soldAtFloat || 0; // 3rd party price (no fee)
+  const qtySold = parseFloat(item.qtySold) || 0;
+  const soldAt = parseFloat(item.soldAt) || 0;           // Steam market price
+  const soldAtFloat = parseFloat(item.soldAtFloat) || 0; // 3rd party price (no fee)
 
   // Revenue from Steam sales (fee applies)
   const steamRevenue = withFee ? qtySold * soldAt * STEAM_FEE : qtySold * soldAt;
@@ -561,18 +565,20 @@ function calcRow(item, withFee) {
   const floatRevenue = qtySold * soldAtFloat;
   // Use whichever is set (float takes priority if both set)
   const soldRevenue = soldAtFloat > 0 ? floatRevenue : steamRevenue;
-  const soldCost = qtySold * item.buyPrice;
+  const soldCost = qtySold * (parseFloat(item.buyPrice) || 0);
   const realisedPL = soldRevenue - soldCost;
 
-  // Net P/L = realised gains from sold items + unrealised value of remaining holdings
+  // Net P/L = realised gains + unrealised on remaining held qty
   const remainingQty = Math.max(0, item.qty - qtySold);
-  const remainingInvested = remainingQty * item.buyPrice;
+  const mktPrice = parseFloat(item.marketPrice) || 0;
+  const buyPriceN = parseFloat(item.buyPrice) || 0;
   const remainingValue = soldAtFloat > 0
-    ? remainingQty * item.marketPrice          // float seller — no fee on remaining
-    : remainingQty * item.marketPrice * (withFee ? STEAM_FEE : 1); // steam seller
-  const unrealisedForNet = remainingValue - remainingInvested;
-  const netPL = unrealisedForNet + realisedPL;
+    ? remainingQty * mktPrice
+    : remainingQty * mktPrice * (withFee ? STEAM_FEE : 1);
+  const unrealisedForNet = remainingValue - remainingQty * buyPriceN;
+  const netPL = isNaN(unrealisedForNet + realisedPL) ? 0 : unrealisedForNet + realisedPL;
   const totalPL = profitLoss + realisedPL;
+  const fullySold = qtySold >= item.qty && qtySold > 0;
 
   // Days held & P/L per day
   const purchaseDate = item.purchaseDate ? new Date(item.purchaseDate) : null;
@@ -613,6 +619,8 @@ function render() {
   if (roiFilter === 'negative') rows = rows.filter(r => r.roi < 0);
   if (typeFilter !== 'all') rows = rows.filter(r => r.type === typeFilter);
   if (freeDropOnly) rows = rows.filter(r => r.freeDrop);
+  const soldOnly = document.getElementById('sold-filter')?.checked;
+  if (soldOnly) rows = rows.filter(r => r.fullySold);
 
   if (sortKey) {
     rows.sort((a, b) => sortDir * (
@@ -654,6 +662,7 @@ function render() {
       const origIdx = items.findIndex(i => i.id === r.id);
       const stale = !r.priceTs;
       const typeLabel = r.type !== 'Case' ? `<span class="type-badge">${r.type}</span>` : '';
+      const soldBadge = r.fullySold ? `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(232,184,75,0.15);color:var(--accent);margin-left:4px;font-family:var(--mono)">sold</span>` : '';
       const imgUrl = getItemImg(r.name, r.icon);
       const imgHtml = imgUrl ? `<img src="${imgUrl}" width="32" height="32" style="border-radius:4px;margin-right:8px;vertical-align:middle;object-fit:contain" onerror="this.style.display='none'" />` : '';
       const condLabel = r.condition ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:var(--muted);margin-left:4px">${r.condition}</span>` : '';
@@ -661,8 +670,8 @@ function render() {
       const targetLabel = r.target ? (r.targetDiff >= 0
         ? `<span style="color:var(--green)" title="Above target! €${r.target.toFixed(2)}">✓ €${r.target.toFixed(2)}</span>`
         : `<span style="color:var(--muted)" title="€${Math.abs(r.targetDiff).toFixed(2)} below target">€${r.target.toFixed(2)}</span>`) : '—';
-      return `<tr>
-        <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${condLabel}${freeLabel}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
+      return `<tr style="${r.fullySold ? 'opacity:0.7' : ''}">
+        <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${condLabel}${freeLabel}${soldBadge}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
         <td class="mono">${r.qty}</td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.buyPrice.toFixed(2)}" onchange="updateBuyPrice(${origIdx}, this.value)" title="Your purchase price per unit" /></td>
         <td class="mono">${fmtEur(r.invested)}</td>
