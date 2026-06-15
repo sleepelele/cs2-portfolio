@@ -617,6 +617,9 @@ function calcRow(item, withFee) {
   const netPL = isNaN(unrealisedForNet + realisedPL) ? 0 : unrealisedForNet + realisedPL;
   const totalPL = profitLoss + realisedPL;
   const fullySold = qtySold >= item.qty && qtySold > 0;
+  // If fully sold, unrealised P/L is zero — item no longer held
+  const unrealisedPL = fullySold ? 0 : profitLoss;
+  const unrealisedValue = fullySold ? 0 : marketValue;
 
   // Days held & P/L per day
   const purchaseDate = item.purchaseDate ? new Date(item.purchaseDate) : null;
@@ -627,7 +630,7 @@ function calcRow(item, withFee) {
   const target = item.targetPrice || null;
   const targetDiff = target ? (item.marketPrice - target) : null; // negative = below target
 
-  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldAtFloat, soldRevenue, realisedPL, totalPL, fullySold, daysHeld, plPerDay, target, targetDiff };
+  return { ...item, invested, marketValue, profitLoss, unrealisedPL, unrealisedValue, roi, qtySold, soldAt, soldAtFloat, soldRevenue, realisedPL, totalPL, fullySold, daysHeld, plPerDay, target, targetDiff };
 }
 
 // ─── Format ───────────────────────────────────────────────────────────────────
@@ -669,8 +672,8 @@ function render() {
   // Metrics use filtered rows so numbers match what's visible
   const allRows = rows;
   const totalInvested = allRows.reduce((s, r) => s + r.invested, 0);
-  const totalValue = allRows.reduce((s, r) => s + r.marketValue, 0);
-  const totalPL = totalValue - totalInvested;
+  const totalValue = allRows.reduce((s, r) => s + r.unrealisedValue, 0);
+  const totalPL = allRows.reduce((s, r) => s + r.unrealisedPL, 0);
   const totalRoi = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
   const totalQty = allRows.reduce((s, r) => s + r.qty, 0);
   const winners = allRows.filter(r => r.roi >= 0).length;
@@ -722,7 +725,7 @@ function render() {
         </td>
         <td class="mono">${fmtEur(r.marketValue)}</td>
         <td><span class="badge ${r.roi >= 0 ? 'badge-green' : 'badge-red'}">${fmtRoi(r.roi)}</span></td>
-        <td class="mono ${r.profitLoss >= 0 ? 'green' : 'red'}" style="font-weight:500">${fmtPL(r.profitLoss)}</td>
+        <td class="mono ${r.unrealisedPL >= 0 ? 'green' : 'red'}" style="font-weight:500">${r.fullySold ? '<span style="color:var(--muted)">sold</span>' : fmtPL(r.unrealisedPL)}</td>
         <td class="mono">${targetLabel}</td>
         <td><input class="price-input" type="number" step="1" min="0" value="${r.qtySold}" onchange="updateSold(${origIdx}, 'qtySold', this.value)" title="How many you've sold" style="width:55px" /></td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Steam market price (15% fee applied)" /></td>
