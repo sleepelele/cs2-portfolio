@@ -172,6 +172,27 @@
   .notepad-textarea { width:100%; height:220px; background:transparent; border:none; color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.6; padding:12px 16px; resize:none; outline:none; }
   .notepad-footer { padding:6px 12px 10px; font-size:10px; color:var(--muted); border-top:1px solid var(--border); }
 
+  /* Auth / lock */
+  .lock-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:var(--radius-sm); font-size:13px; cursor:pointer; border:1px solid var(--border2); background:var(--surface2); color:var(--muted); font-family:var(--sans); transition:background 0.15s; }
+  .lock-btn:hover { background:rgba(255,255,255,0.07); color:var(--text); }
+  .lock-btn.unlocked { color:var(--green); border-color:rgba(76,175,125,0.3); }
+  .readonly-overlay { pointer-events:none; opacity:0.5; }
+  body.locked .edit-only { display:none !important; }
+  body.locked .price-input { pointer-events:none; background:transparent; border-color:transparent; }
+  body.locked .fetch-btn { display:none; }
+  body.locked .edit-btn { display:none; }
+  body.locked .delete-btn { display:none; }
+  body.locked #refresh-all-btn { display:none; }
+  body.locked #add-item-btn { display:none; }
+  .pw-modal { position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:300; display:flex; align-items:center; justify-content:center; }
+  .pw-modal.hidden { display:none; }
+  .pw-box { background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); padding:28px; width:320px; }
+  .pw-box h3 { font-size:15px; margin-bottom:16px; }
+  .pw-input { width:100%; background:var(--bg); border:1px solid var(--border2); border-radius:var(--radius-sm); color:var(--text); font-size:14px; padding:9px 12px; font-family:var(--sans); margin-bottom:12px; }
+  .pw-input:focus { outline:none; border-color:var(--accent); }
+  .pw-error { font-size:12px; color:var(--red); margin-bottom:10px; display:none; }
+  .pw-footer { display:flex; gap:8px; justify-content:flex-end; }
+
 </style>
 </head>
 <body>
@@ -184,7 +205,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh prices
     </button>
-    <button class="btn btn-accent" onclick="openAddModal()">
+    <button class="lock-btn" id="lock-btn" onclick="toggleLock()" title="Click to unlock editing">
+      <svg id="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <span id="lock-label">Locked</span>
+    </button>
+    <button class="btn btn-accent edit-only" id="add-item-btn" onclick="openAddModal()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Add item
     </button>
@@ -390,6 +415,19 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Password modal -->
+<div class="pw-modal hidden" id="pw-modal">
+  <div class="pw-box">
+    <h3>🔒 Enter password to edit</h3>
+    <input class="pw-input" id="pw-input" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')checkPassword()" autofocus />
+    <div class="pw-error" id="pw-error">Incorrect password</div>
+    <div class="pw-footer">
+      <button class="btn" onclick="closePwModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="checkPassword()">Unlock</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -1578,6 +1616,84 @@ async function loadNotepadFromSupabase() {
   } catch {}
 }
 
+// ─── Auth / lock ──────────────────────────────────────────────────────────────
+// Password hash: SHA-256 of your password
+// Default password is "cs2invest" — change by running:
+// SHA-256 of your chosen password and replacing the hash below
+const PW_HASH = '8fdeb568f0ae29bfe595d660b4736ea21b88824178d94703c3a51f6114e53edd'; // sha256 of 'cs2invest' — change this!
+let isUnlocked = false;
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function toggleLock() {
+  if (isUnlocked) {
+    // Lock it
+    isUnlocked = false;
+    sessionStorage.removeItem('cs2_unlocked');
+    document.body.classList.add('locked');
+    updateLockUI();
+  } else {
+    openPwModal();
+  }
+}
+
+function openPwModal() {
+  document.getElementById('pw-modal').classList.remove('hidden');
+  document.getElementById('pw-input').value = '';
+  document.getElementById('pw-error').style.display = 'none';
+  setTimeout(() => document.getElementById('pw-input').focus(), 50);
+}
+
+function closePwModal() {
+  document.getElementById('pw-modal').classList.add('hidden');
+}
+
+async function checkPassword() {
+  const val = document.getElementById('pw-input').value;
+  const hash = await sha256(val);
+  if (hash === PW_HASH) {
+    isUnlocked = true;
+    sessionStorage.setItem('cs2_unlocked', '1');
+    document.body.classList.remove('locked');
+    updateLockUI();
+    closePwModal();
+    toast('✓ Editing unlocked');
+  } else {
+    document.getElementById('pw-error').style.display = 'block';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
+
+function updateLockUI() {
+  const btn = document.getElementById('lock-btn');
+  const label = document.getElementById('lock-label');
+  const icon = document.getElementById('lock-icon');
+  if (isUnlocked) {
+    btn.classList.add('unlocked');
+    label.textContent = 'Unlocked';
+    icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>';
+  } else {
+    btn.classList.remove('unlocked');
+    label.textContent = 'Locked';
+    icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>';
+  }
+}
+
+function initAuth() {
+  // Stay unlocked within the same browser session
+  if (sessionStorage.getItem('cs2_unlocked') === '1') {
+    isUnlocked = true;
+    document.body.classList.remove('locked');
+  } else {
+    document.body.classList.add('locked');
+  }
+  updateLockUI();
+}
+
 // ─── Init ──────────────────────────────────────────────────────────────────────
 function resetData() {
   if (!confirm('Reset all data to defaults? This will clear any items you added or edited.')) return;
@@ -1589,6 +1705,7 @@ function resetData() {
 }
 
 load();
+initAuth();
 render();
 // Load from Supabase in background — updates if remote has newer data
 loadFromSupabase();
