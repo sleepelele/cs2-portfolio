@@ -289,24 +289,11 @@ const PROXY_URL = 'https://cs2-price-proxy.onrender.com';
 const STEAM_FEE = 0.85;
 const LS_KEY = 'cs2_portfolio_v3'; // bumped to reset old data with wrong market prices
 
-// ─── Item image helper (uses Steam market icon via name) ──────────────────────
-// Images are fetched from the Steam market listing page icon
-const ITEM_IMAGES = {
-  'Fever Case':                    'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9_HmGz5vJqBVB-ZDoMdqRfbL5mWQ/75fx75f',
-  'Revolution Case':               'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9YjnFLtrUMNmPsMqhZ2D7I4-Tdl9FmN5mWQ/75fx75f',
-  'Prisma Case':                   'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp0u3VvkrUJsYzqPIoKPdVFDvY15vWqQ/75fx75f',
-  'Fracture Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9r3FPmrEJsYzrPIoKPdVHDvY15vWqQ/75fx75f',
-  'Kilowatt Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYjwfCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSp9bnlW-ukI9Y2uIoKPdVFzuY15vWqQ/75fx75f',
-  'Operation Phoenix Weapon Case': 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9Ri3lPkqEthZ2D7I4-TdkRmN5mWQ/75fx75f',
-  'Operation Breakout Weapon Case':'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT9Mm3lak-EM-Z2H7I4-TdlFmN5mWQ/75fx75f',
-  'Spectrum Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuT8di3lGk-UJpZW3I4-TdkNmN5mWQ/75fx75f',
-  'Chroma 3 Case':                 'https://steamcommunity-a.akamaihd.net/economy/image/-9a81dlWLwJ2UUGcVs_nsVtzdOEdtWwKGZZLQHTxDZ7I56KU0Zwwo4NUX4oFJZEHLbXU5A1PIYQNqhpOSV-fRPasw8rsUFJ5KBFZv668FFYg0fCCekJT08yOgZKOkb_mZuLTxlRcsJ0piLuSoQ-3VetrURuZmH7I4-TdkRmN5mWQ/75fx75f',
-};
-// For unknown items, fall back to Steam market icon API
+// ─── Item image — icons fetched from Steam via proxy and stored on item ─────────
 function getItemImg(name, icon) {
-  if (icon) return icon;
-  return ITEM_IMAGES[name] || null;
+  return icon || null; // icons are fetched via /icons endpoint and saved to localStorage
 }
+
 
 // ─── Correct CS2 item names (exact Steam market names) ───────────────────────
 const NAME_CORRECTIONS = {
@@ -347,15 +334,15 @@ function load() {
 }
 function defaultItems() {
   return [
-    { id: uid(), name: 'Fever Case',                     type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0, priceTs: null, img: 'fevercase' },
-    { id: uid(), name: 'Revolution Case',                type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0, priceTs: null, img: 'revolutioncase' },
-    { id: uid(), name: 'Prisma Case',                    type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 0, priceTs: null, img: 'prismacase' },
-    { id: uid(), name: 'Fracture Case',                  type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0, priceTs: null, img: 'fracturecase' },
-    { id: uid(), name: 'Kilowatt Case',                  type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0, priceTs: null, img: 'kilowattcase' },
-    { id: uid(), name: 'Operation Phoenix Weapon Case',  type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 0, priceTs: null, img: 'ophoenixcase' },
-    { id: uid(), name: 'Operation Breakout Weapon Case', type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 0, priceTs: null, img: 'opbreakoutcase' },
-    { id: uid(), name: 'Spectrum Case',                  type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 0, priceTs: null, img: 'spectrumcase' },
-    { id: uid(), name: 'Chroma 3 Case',                  type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 0, priceTs: null, img: 'chroma3case' },
+    { id: uid(), name: 'Fever Case',                     type: 'Case', qty: 3,   buyPrice: 0.50, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Revolution Case',                type: 'Case', qty: 100, buyPrice: 0.25, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Prisma Case',                    type: 'Case', qty: 30,  buyPrice: 1.21, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Fracture Case',                  type: 'Case', qty: 50,  buyPrice: 0.47, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Kilowatt Case',                  type: 'Case', qty: 100, buyPrice: 0.19, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Operation Phoenix Weapon Case',  type: 'Case', qty: 25,  buyPrice: 3.23, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Operation Breakout Weapon Case', type: 'Case', qty: 20,  buyPrice: 6.36, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Spectrum Case',                  type: 'Case', qty: 7,   buyPrice: 3.22, marketPrice: 0, priceTs: null },
+    { id: uid(), name: 'Chroma 3 Case',                  type: 'Case', qty: 3,   buyPrice: 3.12, marketPrice: 0, priceTs: null },
   ];
 }
 function uid() { return Math.random().toString(36).slice(2, 9); }
