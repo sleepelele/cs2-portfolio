@@ -236,8 +236,6 @@
             <th onclick="sortBy('marketValue')">Value <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('roi')">ROI <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('profitLoss')">Unrealised P/L <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('daysHeld')" title="Days since purchase">Days <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('plPerDay')" title="Profit/loss per day">P/L per day <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('targetDiff')" title="Target sell price">Target <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('qtySold')" title="How many you've sold">Sold <span class="sort-icon">↕</span></th>
             <th title="Average price you sold at">Sold at</th>
@@ -629,7 +627,7 @@ function render() {
   // Table
   const tbody = document.getElementById('holdings-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
   } else {
     tbody.innerHTML = rows.map(r => {
       const origIdx = items.findIndex(i => i.id === r.id);
@@ -639,8 +637,6 @@ function render() {
       const imgHtml = imgUrl ? `<img src="${imgUrl}" width="32" height="32" style="border-radius:4px;margin-right:8px;vertical-align:middle;object-fit:contain" onerror="this.style.display='none'" />` : '';
       const condLabel = r.condition ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:var(--muted);margin-left:4px">${r.condition}</span>` : '';
       const freeLabel = r.freeDrop ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--green-dim);color:var(--green);margin-left:4px">free</span>` : '';
-      const daysLabel = r.daysHeld ? `${r.daysHeld}d` : '—';
-      const plDayLabel = r.plPerDay != null ? `<span style="color:${r.plPerDay >= 0 ? 'var(--green)' : 'var(--red)'}">${r.plPerDay >= 0 ? '+' : ''}€${r.plPerDay.toFixed(3)}</span>` : '—';
       const targetLabel = r.target ? (r.targetDiff >= 0
         ? `<span style="color:var(--green)" title="Above target! €${r.target.toFixed(2)}">✓ €${r.target.toFixed(2)}</span>`
         : `<span style="color:var(--muted)" title="€${Math.abs(r.targetDiff).toFixed(2)} below target">€${r.target.toFixed(2)}</span>`) : '—';
@@ -660,8 +656,6 @@ function render() {
         <td class="mono">${fmtEur(r.marketValue)}</td>
         <td><span class="badge ${r.roi >= 0 ? 'badge-green' : 'badge-red'}">${fmtRoi(r.roi)}</span></td>
         <td class="mono ${r.profitLoss >= 0 ? 'green' : 'red'}" style="font-weight:500">${fmtPL(r.profitLoss)}</td>
-        <td class="mono" style="color:var(--muted)">${daysLabel}</td>
-        <td class="mono">${plDayLabel}</td>
         <td class="mono">${targetLabel}</td>
         <td><input class="price-input" type="number" step="1" min="0" value="${r.qtySold}" onchange="updateSold(${origIdx}, 'qtySold', this.value)" title="How many you've sold" style="width:55px" /></td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Average sell price per unit" /></td>
