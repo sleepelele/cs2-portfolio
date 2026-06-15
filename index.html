@@ -208,9 +208,16 @@
       <select class="filter-select" id="filter-type" onchange="render()">
         <option value="all">All types</option>
         <option value="Case">Cases</option>
+        <option value="Weapon">Weapons</option>
         <option value="Skin">Skins</option>
+        <option value="Pass">Passes</option>
+        <option value="Sticker">Stickers</option>
         <option value="Other">Other</option>
       </select>
+      <label class="toggle-fee" style="margin-left:0">
+        <input type="checkbox" id="free-drop-filter" onchange="render()" />
+        Free drops only
+      </label>
       <label class="toggle-fee">
         <input type="checkbox" id="fee-toggle" checked onchange="render()" />
         Subtract Steam 15% fee
@@ -229,6 +236,9 @@
             <th onclick="sortBy('marketValue')">Value <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('roi')">ROI <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('profitLoss')">Unrealised P/L <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('daysHeld')" title="Days since purchase">Days <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('plPerDay')" title="Profit/loss per day">P/L per day <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('targetDiff')" title="Target sell price">Target <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('qtySold')" title="How many you've sold">Sold <span class="sort-icon">↕</span></th>
             <th title="Average price you sold at">Sold at</th>
             <th onclick="sortBy('realisedPL')" title="Profit/loss from items already sold">Realised P/L <span class="sort-icon">↕</span></th>
@@ -302,15 +312,35 @@
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Type</label>
-        <select class="form-input" id="modal-type">
+        <select class="form-input" id="modal-type" onchange="onModalTypeChange()">
           <option value="Case">Case</option>
+          <option value="Weapon">Weapon</option>
           <option value="Skin">Skin</option>
+          <option value="Pass">Pass</option>
+          <option value="Sticker">Sticker</option>
           <option value="Other">Other</option>
         </select>
       </div>
       <div class="form-group">
+        <label class="form-label">Condition</label>
+        <select class="form-input" id="modal-condition">
+          <option value="">— N/A —</option>
+          <option value="FN">Factory New</option>
+          <option value="MW">Minimal Wear</option>
+          <option value="FT">Field-Tested</option>
+          <option value="WW">Well-Worn</option>
+          <option value="BS">Battle-Scarred</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
         <label class="form-label">Quantity</label>
         <input class="form-input" id="modal-qty" type="number" min="1" value="1" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date purchased</label>
+        <input class="form-input" id="modal-date" type="date" />
       </div>
     </div>
     <div class="form-row">
@@ -322,6 +352,18 @@
         <label class="form-label">Market price (€)</label>
         <input class="form-input" id="modal-market" type="number" min="0" step="0.01" placeholder="auto-fetch" />
         <div class="form-hint">Leave blank to fetch from Steam</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Target sell price (€)</label>
+        <input class="form-input" id="modal-target" type="number" min="0" step="0.01" placeholder="optional" />
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text)">
+          <input type="checkbox" id="modal-freedrop" style="accent-color:var(--accent);width:15px;height:15px" onchange="onFreeDropChange()" />
+          Free drop
+        </label>
       </div>
     </div>
     <div class="modal-footer">
@@ -498,13 +540,22 @@ function calcRow(item, withFee) {
 
   // Sold calculations
   const qtySold = item.qtySold || 0;
-  const soldAt = item.soldAt || 0; // avg sell price per unit
+  const soldAt = item.soldAt || 0;
   const soldRevenue = withFee ? qtySold * soldAt * STEAM_FEE : qtySold * soldAt;
   const soldCost = qtySold * item.buyPrice;
   const realisedPL = soldRevenue - soldCost;
   const totalPL = profitLoss + realisedPL;
 
-  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldRevenue, realisedPL, totalPL };
+  // Days held & P/L per day
+  const purchaseDate = item.purchaseDate ? new Date(item.purchaseDate) : null;
+  const daysHeld = purchaseDate ? Math.max(1, Math.floor((Date.now() - purchaseDate) / 86400000)) : null;
+  const plPerDay = daysHeld && invested > 0 ? profitLoss / daysHeld : null;
+
+  // Target sell price
+  const target = item.targetPrice || null;
+  const targetDiff = target ? (item.marketPrice - target) : null; // negative = below target
+
+  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldRevenue, realisedPL, totalPL, daysHeld, plPerDay, target, targetDiff };
 }
 
 // ─── Format ───────────────────────────────────────────────────────────────────
@@ -526,12 +577,14 @@ function render() {
   const roiFilter = document.getElementById('filter-roi').value;
   const typeFilter = document.getElementById('filter-type').value;
 
+  const freeDropOnly = document.getElementById('free-drop-filter')?.checked;
   let rows = items.map(item => calcRow(item, withFee));
 
   if (q) rows = rows.filter(r => r.name.toLowerCase().includes(q));
   if (roiFilter === 'positive') rows = rows.filter(r => r.roi >= 0);
   if (roiFilter === 'negative') rows = rows.filter(r => r.roi < 0);
   if (typeFilter !== 'all') rows = rows.filter(r => r.type === typeFilter);
+  if (freeDropOnly) rows = rows.filter(r => r.freeDrop);
 
   if (sortKey) {
     rows.sort((a, b) => sortDir * (
@@ -539,8 +592,8 @@ function render() {
     ));
   }
 
-  // Metrics
-  const allRows = items.map(item => calcRow(item, withFee));
+  // Metrics use filtered rows so numbers match what's visible
+  const allRows = rows;
   const totalInvested = allRows.reduce((s, r) => s + r.invested, 0);
   const totalValue = allRows.reduce((s, r) => s + r.marketValue, 0);
   const totalPL = totalValue - totalInvested;
@@ -566,7 +619,7 @@ function render() {
   // Table
   const tbody = document.getElementById('holdings-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
   } else {
     tbody.innerHTML = rows.map(r => {
       const origIdx = items.findIndex(i => i.id === r.id);
@@ -574,8 +627,15 @@ function render() {
       const typeLabel = r.type !== 'Case' ? `<span class="type-badge">${r.type}</span>` : '';
       const imgUrl = getItemImg(r.name, r.icon);
       const imgHtml = imgUrl ? `<img src="${imgUrl}" width="32" height="32" style="border-radius:4px;margin-right:8px;vertical-align:middle;object-fit:contain" onerror="this.style.display='none'" />` : '';
+      const condLabel = r.condition ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:var(--muted);margin-left:4px">${r.condition}</span>` : '';
+      const freeLabel = r.freeDrop ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--green-dim);color:var(--green);margin-left:4px">free</span>` : '';
+      const daysLabel = r.daysHeld ? `${r.daysHeld}d` : '—';
+      const plDayLabel = r.plPerDay != null ? `<span style="color:${r.plPerDay >= 0 ? 'var(--green)' : 'var(--red)'}">${r.plPerDay >= 0 ? '+' : ''}€${r.plPerDay.toFixed(3)}</span>` : '—';
+      const targetLabel = r.target ? (r.targetDiff >= 0
+        ? `<span style="color:var(--green)" title="Above target! €${r.target.toFixed(2)}">✓ €${r.target.toFixed(2)}</span>`
+        : `<span style="color:var(--muted)" title="€${Math.abs(r.targetDiff).toFixed(2)} below target">€${r.target.toFixed(2)}</span>`) : '—';
       return `<tr>
-        <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
+        <td class="item-name" style="display:flex;align-items:center">${imgHtml}<div>${r.name}${condLabel}${freeLabel}${typeLabel}<small>${r.type} · ${fmtAge(r.priceTs)}</small></div></td>
         <td class="mono">${r.qty}</td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.buyPrice.toFixed(2)}" onchange="updateBuyPrice(${origIdx}, this.value)" title="Your purchase price per unit" /></td>
         <td class="mono">${fmtEur(r.invested)}</td>
@@ -590,6 +650,9 @@ function render() {
         <td class="mono">${fmtEur(r.marketValue)}</td>
         <td><span class="badge ${r.roi >= 0 ? 'badge-green' : 'badge-red'}">${fmtRoi(r.roi)}</span></td>
         <td class="mono ${r.profitLoss >= 0 ? 'green' : 'red'}" style="font-weight:500">${fmtPL(r.profitLoss)}</td>
+        <td class="mono" style="color:var(--muted)">${daysLabel}</td>
+        <td class="mono">${plDayLabel}</td>
+        <td class="mono">${targetLabel}</td>
         <td><input class="price-input" type="number" step="1" min="0" value="${r.qtySold}" onchange="updateSold(${origIdx}, 'qtySold', this.value)" title="How many you've sold" style="width:55px" /></td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Average sell price per unit" /></td>
         <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
@@ -894,10 +957,27 @@ function openAddModal() {
   document.getElementById('modal-buy').value = '';
   document.getElementById('modal-market').value = '';
   document.getElementById('modal-type').value = 'Case';
+  document.getElementById('modal-condition').value = '';
+  document.getElementById('modal-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modal-target').value = '';
+  document.getElementById('modal-freedrop').checked = false;
   document.getElementById('search-hint').textContent = 'Start typing — results appear from Steam market';
   document.getElementById('search-dropdown').style.display = 'none';
   document.getElementById('modal-overlay').classList.remove('hidden');
   document.getElementById('modal-name').focus();
+}
+
+function onFreeDropChange() {
+  const isFree = document.getElementById('modal-freedrop').checked;
+  if (isFree) document.getElementById('modal-buy').value = '0.00';
+}
+
+function onModalTypeChange() {
+  const type = document.getElementById('modal-type').value;
+  const condEl = document.getElementById('modal-condition');
+  // Show condition only for types where it makes sense
+  const hasCondition = ['Skin', 'Weapon'].includes(type);
+  condEl.closest('.form-group').style.opacity = hasCondition ? '1' : '0.4';
 }
 
 function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); }
@@ -917,7 +997,11 @@ function saveItem() {
     items[editIdx] = { ...items[editIdx], name, qty, buyPrice, marketPrice, type };
   } else {
     // Always add as new row — allows tracking same item at different buy prices
-    items.push({ id: uid(), name, type, qty, buyPrice, marketPrice, priceTs: null, icon: pendingIcon });
+    const condition = document.getElementById('modal-condition').value || null;
+    const purchaseDate = document.getElementById('modal-date').value || null;
+    const targetPrice = parseFloat(document.getElementById('modal-target').value) || null;
+    const freeDrop = document.getElementById('modal-freedrop').checked;
+    items.push({ id: uid(), name, type, qty, buyPrice, marketPrice, priceTs: null, icon: pendingIcon, condition, purchaseDate, targetPrice, freeDrop });
   }
   save();
   render();
@@ -1101,11 +1185,18 @@ function selectSearchItem(i) {
   const n = item.name.toLowerCase();
   if (n.includes('case') || n.includes('capsule') || n.includes('package')) {
     document.getElementById('modal-type').value = 'Case';
-  } else if (n.includes('sticker') || n.includes('patch') || n.includes('graffiti') || n.includes('pin') || n.includes('charm')) {
+  } else if (n.includes('sticker')) {
+    document.getElementById('modal-type').value = 'Sticker';
+  } else if (n.includes('pass') || n.includes('operation')) {
+    document.getElementById('modal-type').value = 'Pass';
+  } else if (n.includes('patch') || n.includes('graffiti') || n.includes('pin') || n.includes('charm') || n.includes('music kit')) {
     document.getElementById('modal-type').value = 'Other';
+  } else if (n.includes('ak-47') || n.includes('m4a') || n.includes('awp') || n.includes('knife') || n.includes('karambit') || n.includes('gloves') || n.includes('★')) {
+    document.getElementById('modal-type').value = 'Weapon';
   } else {
     document.getElementById('modal-type').value = 'Skin';
   }
+  onModalTypeChange();
   document.getElementById('modal-buy').focus();
 }
 
