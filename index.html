@@ -248,7 +248,7 @@
             <th title="Avg sell price via Steam market (15% fee applies)">Sold at (Steam)</th>
             <th title="Avg sell price via CSFloat or other 3rd party (no fee)">Sold at (Float)</th>
             <th onclick="sortBy('realisedPL')" title="Profit/loss from items already sold">Realised P/L <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('netPL')" title="Final combined P/L — holdings + sales, fees accounted for">Net P/L <span class="sort-icon">↕</span></th>
+
             <th></th>
           </tr>
         </thead>
@@ -589,7 +589,7 @@ function calcRow(item, withFee) {
   const target = item.targetPrice || null;
   const targetDiff = target ? (item.marketPrice - target) : null; // negative = below target
 
-  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldRevenue, realisedPL, totalPL, daysHeld, plPerDay, target, targetDiff };
+  return { ...item, invested, marketValue, profitLoss, roi, qtySold, soldAt, soldAtFloat, soldRevenue, realisedPL, totalPL, fullySold, daysHeld, plPerDay, target, targetDiff };
 }
 
 // ─── Format ───────────────────────────────────────────────────────────────────
@@ -638,7 +638,6 @@ function render() {
   const winners = allRows.filter(r => r.roi >= 0).length;
 
   const totalRealised = allRows.reduce((s, r) => s + r.realisedPL, 0);
-  const grandNetPL = allRows.reduce((s, r) => s + r.netPL, 0);
   const grandTotalPL = totalPL + totalRealised;
 
   const mg = document.getElementById('metrics-grid');
@@ -647,7 +646,7 @@ function render() {
     <div class="metric-card"><div class="metric-label">Market value</div><div class="metric-value mono">${fmtEur(totalValue)}</div><div class="metric-sub">${withFee ? 'after Steam fee' : 'before fee'}</div></div>
     <div class="metric-card"><div class="metric-label">Unrealised P/L</div><div class="metric-value mono ${totalPL >= 0 ? 'green' : 'red'}">${fmtPL(totalPL)}</div><div class="metric-sub">holdings at market</div></div>
     <div class="metric-card"><div class="metric-label">Realised P/L</div><div class="metric-value mono ${totalRealised >= 0 ? 'green' : 'red'}">${fmtPL(totalRealised)}</div><div class="metric-sub">from sold items</div></div>
-    <div class="metric-card"><div class="metric-label">Net P/L</div><div class="metric-value mono ${grandNetPL >= 0 ? 'green' : 'red'}">${fmtPL(grandNetPL)}</div><div class="metric-sub">after fees, all activity</div></div>
+
     <div class="metric-card"><div class="metric-label">Portfolio ROI</div><div class="metric-value mono ${totalRoi >= 0 ? 'green' : 'red'}">${fmtRoi(totalRoi)}</div></div>
     <div class="metric-card"><div class="metric-label">Holdings</div><div class="metric-value mono">${totalQty}</div><div class="metric-sub">${items.length} unique</div></div>
     <div class="metric-card"><div class="metric-label">Winners</div><div class="metric-value mono accent">${winners}<span style="font-size:14px;color:var(--muted)">/${items.length}</span></div></div>
@@ -656,7 +655,7 @@ function render() {
   // Table
   const tbody = document.getElementById('holdings-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
   } else {
     tbody.innerHTML = rows.map(r => {
       const origIdx = items.findIndex(i => i.id === r.id);
@@ -691,7 +690,7 @@ function render() {
         <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Steam market price (15% fee applied)" /></td>
         <td><input class="price-input" type="number" step="0.01" min="0" value="${(r.soldAtFloat||0).toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAtFloat', this.value)" title="CSFloat / 3rd party price (no fee)" style="border-color:rgba(91,138,240,0.3)" /></td>
         <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
-        <td class="mono ${r.netPL >= 0 ? 'green' : 'red'}" style="font-weight:700">${fmtPL(r.netPL)}</td>
+
         <td style="display:flex;gap:4px;align-items:center">
           <button class="edit-btn" onclick="editItem(${origIdx})" title="Edit item">✎</button>
           <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete">✕</button>
