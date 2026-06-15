@@ -510,31 +510,36 @@ function updatePrice(idx, val) {
   render();
 }
 
-// ─── Price fetch via Render proxy (now with browser headers to bypass Steam blocks)
+// ─── Single price fetch — direct from browser to Steam (EUR, no conversion needed)
+// Steam allows browser requests to priceoverview, only blocks server IPs
 async function fetchOne(idx) {
   const item = items[idx];
   toast(`Fetching ${item.name}…`);
   try {
-    const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
+    // Call Steam directly from the browser — currency=3 is EUR
+    const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(item.name)}`;
+    const res = await fetch(steamUrl);
+    if (!res.ok) throw new Error(`Steam returned ${res.status}`);
     const data = await res.json();
-    const USD_TO_EUR = 0.92;
-    let price = null;
-    if (data.lowest_price != null) price = data.lowest_price;
-    else if (data.lowest_price_usd != null) price = parseFloat((data.lowest_price_usd * USD_TO_EUR).toFixed(2));
+    if (!data.success) throw new Error('not_found');
 
-    if (price != null) {
+    // Parse EUR string e.g. "0,78€" or "10,63 €"
+    const raw = data.lowest_price || data.median_price;
+    const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
+
+    if (!isNaN(price)) {
       items[idx].marketPrice = price;
       items[idx].priceTs = Date.now();
-      items[idx].priceSource = data.source || 'unknown';
+      items[idx].priceSource = 'steam_eur_direct';
       save();
       render();
-      toast(`✓ ${item.name}: €${price.toFixed(2)}`);
+      toast(`✓ ${item.name}: €${price.toFixed(2)} (Steam EUR)`);
     } else {
-      toast(`Not found: ${item.name}`, true);
-      console.warn('Price response:', data);
+      throw new Error('Could not parse price: ' + raw);
     }
   } catch (e) {
-    toast(`Error: ${e.message}`, true);
+    if (e.message === 'not_found') toast(`"${item.name}" not found on Steam market`, true);
+    else toast(`Fetch failed: ${e.message}`, true);
   }
 }
 
@@ -543,48 +548,47 @@ async function refreshAllPrices() {
   btn.disabled = true;
   const uniqueNames = [...new Set(items.map(i => i.name))];
   const secs = Math.round(uniqueNames.length * 1.5);
-  toast(`Fetching ${uniqueNames.length} prices (~${secs}s)…`);
+  const delayMs = ms => new Promise(r => setTimeout(r, ms));
 
-  try {
-    btn.textContent = 'Fetching prices…';
-    const res = await fetch(`${PROXY_URL}/prices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ names: uniqueNames })
-    });
-    if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
-    const data = await res.json();
+  toast(`Fetching ${uniqueNames.length} prices from Steam (~${secs}s)…`);
 
-    let updated = 0, failed = [];
-    // USD/EUR rate — steamapis returns USD, Steam returns EUR
-    // We store prices as EUR. 1 USD ≈ 0.92 EUR (close enough for display)
-    const USD_TO_EUR = 0.92;
-    items.forEach(item => {
-      const r = data[item.name];
-      if (r && r.lowest_price != null) {
-        item.marketPrice = r.lowest_price; // EUR from Steam
-        item.priceTs = Date.now();
-        item.priceSource = r.source || 'steam_eur';
+  // Call Steam directly from browser — exact EUR, no conversion
+  // Steam allows browser requests, just rate limits to ~1/sec
+  let updated = 0, failed = [];
+  for (let i = 0; i < uniqueNames.length; i++) {
+    const name = uniqueNames[i];
+    btn.textContent = `Fetching ${i + 1}/${uniqueNames.length}…`;
+    try {
+      const steamUrl = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=3&market_hash_name=${encodeURIComponent(name)}`;
+      const res = await fetch(steamUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error('not_found');
+      const raw = data.lowest_price || data.median_price;
+      const price = parseFloat(raw.replace(/[^0-9.,]/g, '').replace(',', '.'));
+      if (!isNaN(price)) {
+        items.forEach(item => {
+          if (item.name === name) {
+            item.marketPrice = price;
+            item.priceTs = Date.now();
+            item.priceSource = 'steam_eur_direct';
+          }
+        });
         updated++;
-      } else if (r && r.lowest_price_usd != null) {
-        item.marketPrice = parseFloat((r.lowest_price_usd * USD_TO_EUR).toFixed(2)); // USD→EUR
-        item.priceTs = Date.now();
-        item.priceSource = r.source || 'steamapis_usd';
-        updated++;
-      } else if (r && r.error) {
-        failed.push(`${item.name}: ${r.error}`);
+        save();
+        render();
       }
-    });
-    save();
-    render();
-    renderCharts();
-    if (failed.length) console.warn('Failed items:', failed);
-    toast(`✓ Updated ${updated}/${uniqueNames.length}${failed.length ? ` · ${failed.length} failed (check console)` : ''}`);
-  } catch (e) {
-    toast(`Proxy error: ${e.message} — try again in 30s`, true);
+    } catch (e) {
+      failed.push(`${name}: ${e.message}`);
+      console.warn(`Failed: ${name}`, e.message);
+    }
+    if (i < uniqueNames.length - 1) await delayMs(1500);
   }
 
-  // Fetch icons for items missing them
+  renderCharts();
+  toast(`✓ ${updated}/${uniqueNames.length} updated (EUR direct from Steam)${failed.length ? ` · ${failed.length} failed` : ''}`);
+
+  // Fetch icons for items missing them via proxy
   const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
   if (missing.length) {
     btn.textContent = 'Fetching icons…';
