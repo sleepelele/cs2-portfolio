@@ -137,10 +137,11 @@
   .tab-content { display: none; }
   .tab-content.active { display: block; }
   .delete-btn { opacity: 0; transition: opacity 0.1s; background: none; border: none; color: var(--red); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
+  .edit-btn { opacity: 0; transition: opacity 0.1s; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
   tr:hover .delete-btn { opacity: 1; }
-  .delete-btn:hover { background: var(--red-dim); }
-  tr:hover .delete-btn[title="Edit"] { color: var(--muted); }
-  tr:hover .delete-btn[title="Edit"]:hover { background: var(--surface2); color: var(--text); }
+  tr:hover .edit-btn { opacity: 1; }
+  .delete-btn:hover { background: var(--red-dim); color: var(--red); }
+  .edit-btn:hover { background: var(--surface2); color: var(--text); }
   .type-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: var(--blue-dim); color: var(--blue); font-family: var(--mono); margin-left: 6px; vertical-align: middle; }
   .search-item { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; color:var(--text); border-bottom:1px solid var(--border); }
   .search-item:last-child { border-bottom:none; }
@@ -664,7 +665,7 @@ function render() {
         <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
         <td class="mono ${r.totalPL >= 0 ? 'green' : 'red'}" style="font-weight:600">${fmtPL(r.totalPL)}</td>
         <td style="display:flex;gap:4px;align-items:center">
-          <button class="delete-btn" onclick="editItem(${origIdx})" title="Edit" style="color:var(--muted);opacity:0">✎</button>
+          <button class="edit-btn" onclick="editItem(${origIdx})" title="Edit item">✎</button>
           <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete">✕</button>
         </td>
       </tr>`;
