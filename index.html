@@ -440,10 +440,10 @@ function render() {
         <td class="mono">${fmtEur(r.invested)}</td>
         <td>
           <div class="price-cell">
-            <span class="${stale ? 'live-dot stale' : 'live-dot'}" title="${stale ? 'Manual price' : 'Fetched from Steam'}"></span>
+            <span class="${stale ? 'live-dot stale' : 'live-dot'}" title="${stale ? 'Manual price' : 'Fetched · source: ' + (r.priceSource || 'unknown')}"></span>
             <input class="price-input" type="number" step="0.01" min="0" value="${r.marketPrice.toFixed(2)}"
               onchange="updatePrice(${origIdx}, this.value)" />
-            <button class="btn btn-sm fetch-btn" onclick="fetchOne(${origIdx})" title="Fetch from Steam">↻</button>
+            <button class="btn btn-sm fetch-btn" onclick="fetchOne(${origIdx})" title="Fetch from Steam · current source: ${r.priceSource || 'manual'}">↻</button>
           </div>
         </td>
         <td class="mono">${fmtEur(r.marketValue)}</td>
@@ -525,6 +525,7 @@ async function fetchOne(idx) {
     if (price != null) {
       items[idx].marketPrice = price;
       items[idx].priceTs = Date.now();
+      items[idx].priceSource = data.source || 'unknown';
       save();
       render();
       toast(`✓ ${item.name}: €${price.toFixed(2)}`);
@@ -563,10 +564,12 @@ async function refreshAllPrices() {
       if (r && r.lowest_price != null) {
         item.marketPrice = r.lowest_price; // EUR from Steam
         item.priceTs = Date.now();
+        item.priceSource = r.source || 'steam_eur';
         updated++;
       } else if (r && r.lowest_price_usd != null) {
         item.marketPrice = parseFloat((r.lowest_price_usd * USD_TO_EUR).toFixed(2)); // USD→EUR
         item.priceTs = Date.now();
+        item.priceSource = r.source || 'steamapis_usd';
         updated++;
       } else if (r && r.error) {
         failed.push(`${item.name}: ${r.error}`);
