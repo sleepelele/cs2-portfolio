@@ -241,9 +241,10 @@
             <th onclick="sortBy('profitLoss')">Unrealised P/L <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('targetDiff')" title="Target sell price">Target <span class="sort-icon">↕</span></th>
             <th onclick="sortBy('qtySold')" title="How many you've sold">Sold <span class="sort-icon">↕</span></th>
-            <th title="Average price you sold at">Sold at</th>
+            <th title="Avg sell price via Steam market (15% fee applies)">Sold at (Steam)</th>
+            <th title="Avg sell price via CSFloat or other 3rd party (no fee)">Sold at (Float)</th>
             <th onclick="sortBy('realisedPL')" title="Profit/loss from items already sold">Realised P/L <span class="sort-icon">↕</span></th>
-            <th onclick="sortBy('totalPL')" title="Unrealised + Realised combined">Total P/L <span class="sort-icon">↕</span></th>
+            <th onclick="sortBy('netPL')" title="Final combined P/L — holdings + sales, fees accounted for">Net P/L <span class="sort-icon">↕</span></th>
             <th></th>
           </tr>
         </thead>
@@ -549,12 +550,26 @@ function calcRow(item, withFee) {
   const profitLoss = marketValue - invested;
   const roi = invested > 0 ? (profitLoss / invested) * 100 : 0;
 
-  // Sold calculations
+  // Sold calculations — Steam (with fee) and Float/3rd party (no fee)
   const qtySold = item.qtySold || 0;
-  const soldAt = item.soldAt || 0;
-  const soldRevenue = withFee ? qtySold * soldAt * STEAM_FEE : qtySold * soldAt;
+  const soldAt = item.soldAt || 0;           // Steam market price
+  const soldAtFloat = item.soldAtFloat || 0; // 3rd party price (no fee)
+
+  // Revenue from Steam sales (fee applies)
+  const steamRevenue = withFee ? qtySold * soldAt * STEAM_FEE : qtySold * soldAt;
+  // Revenue from float/3rd party sales (no fee ever)
+  const floatRevenue = qtySold * soldAtFloat;
+  // Use whichever is set (float takes priority if both set)
+  const soldRevenue = soldAtFloat > 0 ? floatRevenue : steamRevenue;
   const soldCost = qtySold * item.buyPrice;
   const realisedPL = soldRevenue - soldCost;
+
+  // Net P/L = unrealised holdings + realised from sales
+  // For unrealised: if selling on float, no fee on remaining holdings too
+  const unrealisedForNet = soldAtFloat > 0
+    ? item.qty * item.marketPrice - item.qty * item.buyPrice  // no fee for float sellers
+    : profitLoss; // with fee for steam sellers
+  const netPL = unrealisedForNet + realisedPL;
   const totalPL = profitLoss + realisedPL;
 
   // Days held & P/L per day
@@ -613,6 +628,7 @@ function render() {
   const winners = allRows.filter(r => r.roi >= 0).length;
 
   const totalRealised = allRows.reduce((s, r) => s + r.realisedPL, 0);
+  const grandNetPL = allRows.reduce((s, r) => s + r.netPL, 0);
   const grandTotalPL = totalPL + totalRealised;
 
   const mg = document.getElementById('metrics-grid');
@@ -621,7 +637,7 @@ function render() {
     <div class="metric-card"><div class="metric-label">Market value</div><div class="metric-value mono">${fmtEur(totalValue)}</div><div class="metric-sub">${withFee ? 'after Steam fee' : 'before fee'}</div></div>
     <div class="metric-card"><div class="metric-label">Unrealised P/L</div><div class="metric-value mono ${totalPL >= 0 ? 'green' : 'red'}">${fmtPL(totalPL)}</div><div class="metric-sub">holdings at market</div></div>
     <div class="metric-card"><div class="metric-label">Realised P/L</div><div class="metric-value mono ${totalRealised >= 0 ? 'green' : 'red'}">${fmtPL(totalRealised)}</div><div class="metric-sub">from sold items</div></div>
-    <div class="metric-card"><div class="metric-label">Total P/L</div><div class="metric-value mono ${grandTotalPL >= 0 ? 'green' : 'red'}">${fmtPL(grandTotalPL)}</div><div class="metric-sub">realised + unrealised</div></div>
+    <div class="metric-card"><div class="metric-label">Net P/L</div><div class="metric-value mono ${grandNetPL >= 0 ? 'green' : 'red'}">${fmtPL(grandNetPL)}</div><div class="metric-sub">after fees, all activity</div></div>
     <div class="metric-card"><div class="metric-label">Portfolio ROI</div><div class="metric-value mono ${totalRoi >= 0 ? 'green' : 'red'}">${fmtRoi(totalRoi)}</div></div>
     <div class="metric-card"><div class="metric-label">Holdings</div><div class="metric-value mono">${totalQty}</div><div class="metric-sub">${items.length} unique</div></div>
     <div class="metric-card"><div class="metric-label">Winners</div><div class="metric-value mono accent">${winners}<span style="font-size:14px;color:var(--muted)">/${items.length}</span></div></div>
@@ -630,7 +646,7 @@ function render() {
   // Table
   const tbody = document.getElementById('holdings-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:40px;color:var(--muted)">No items match your filters</td></tr>';
   } else {
     tbody.innerHTML = rows.map(r => {
       const origIdx = items.findIndex(i => i.id === r.id);
@@ -661,9 +677,10 @@ function render() {
         <td class="mono ${r.profitLoss >= 0 ? 'green' : 'red'}" style="font-weight:500">${fmtPL(r.profitLoss)}</td>
         <td class="mono">${targetLabel}</td>
         <td><input class="price-input" type="number" step="1" min="0" value="${r.qtySold}" onchange="updateSold(${origIdx}, 'qtySold', this.value)" title="How many you've sold" style="width:55px" /></td>
-        <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Average sell price per unit" /></td>
+        <td><input class="price-input" type="number" step="0.01" min="0" value="${r.soldAt.toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAt', this.value)" title="Steam market price (15% fee applied)" /></td>
+        <td><input class="price-input" type="number" step="0.01" min="0" value="${(r.soldAtFloat||0).toFixed(2)}" onchange="updateSold(${origIdx}, 'soldAtFloat', this.value)" title="CSFloat / 3rd party price (no fee)" style="border-color:rgba(91,138,240,0.3)" /></td>
         <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
-        <td class="mono ${r.totalPL >= 0 ? 'green' : 'red'}" style="font-weight:600">${fmtPL(r.totalPL)}</td>
+        <td class="mono ${r.netPL >= 0 ? 'green' : 'red'}" style="font-weight:700">${fmtPL(r.netPL)}</td>
         <td style="display:flex;gap:4px;align-items:center">
           <button class="edit-btn" onclick="editItem(${origIdx})" title="Edit item">✎</button>
           <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete">✕</button>
