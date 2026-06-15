@@ -148,6 +148,27 @@
   .search-item-price { font-family:var(--mono); font-size:12px; color:var(--muted); }
   .search-loading { padding:12px; text-align:center; color:var(--muted); font-size:12px; }
 
+  /* Price history tab */
+  .history-controls { display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
+  .history-select { background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius-sm); color:var(--text); padding:7px 12px; font-size:13px; font-family:var(--sans); min-width:220px; }
+  .history-select:focus { outline:none; border-color:var(--accent); }
+  .history-empty { text-align:center; padding:60px 20px; color:var(--muted); font-size:13px; }
+
+  /* Notepad floating button */
+  .notepad-fab { position:fixed; bottom:24px; left:24px; width:44px; height:44px; border-radius:50%; background:var(--surface2); border:1px solid var(--border2); color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:150; transition:background 0.15s, color 0.15s, border-color 0.15s; box-shadow:0 4px 12px rgba(0,0,0,0.4); }
+  .notepad-fab:hover { background:var(--accent); border-color:var(--accent); color:#1a1200; }
+  .notepad-fab svg { width:18px; height:18px; }
+
+  /* Notepad popup */
+  .notepad-popup { position:fixed; bottom:80px; left:24px; width:320px; background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); box-shadow:0 8px 32px rgba(0,0,0,0.5); z-index:151; display:flex; flex-direction:column; transition:opacity 0.15s, transform 0.15s; }
+  .notepad-popup.hidden { opacity:0; pointer-events:none; transform:translateY(8px); }
+  .notepad-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px 8px; border-bottom:1px solid var(--border); }
+  .notepad-header span { font-size:12px; font-weight:500; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; }
+  .notepad-close { background:none; border:none; color:var(--muted); cursor:pointer; font-size:16px; padding:0 4px; line-height:1; }
+  .notepad-close:hover { color:var(--text); }
+  .notepad-textarea { width:100%; height:220px; background:transparent; border:none; color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.6; padding:12px 16px; resize:none; outline:none; }
+  .notepad-footer { padding:6px 12px 10px; font-size:10px; color:var(--muted); border-top:1px solid var(--border); }
+
 </style>
 </head>
 <body>
@@ -173,6 +194,7 @@
   <div class="tabs">
     <button class="tab active" onclick="setTab('holdings')">Holdings</button>
     <button class="tab" onclick="setTab('charts')">Charts</button>
+    <button class="tab" onclick="setTab('history')">Price history</button>
   </div>
 
   <div id="tab-holdings" class="tab-content active">
@@ -236,6 +258,35 @@
       </div>
     </div>
   </div>
+
+  <div id="tab-history" class="tab-content">
+    <div class="history-controls">
+      <select class="history-select" id="history-item-select" onchange="renderHistoryChart()">
+        <option value="">— Select an item —</option>
+      </select>
+      <span style="font-size:12px;color:var(--muted)" id="history-data-count"></span>
+    </div>
+    <div id="history-chart-wrap" class="chart-card" style="display:none">
+      <div class="chart-title" id="history-chart-title"></div>
+      <div class="chart-wrap" style="height:320px"><canvas id="history-chart" role="img" aria-label="Price history line chart"></canvas></div>
+    </div>
+    <div class="history-empty" id="history-empty">Select an item above to see its price history.<br><small style="color:var(--muted);margin-top:6px;display:block">Prices are recorded each time you hit Refresh prices.</small></div>
+  </div>
+</div>
+
+<!-- Notepad FAB -->
+<button class="notepad-fab" onclick="toggleNotepad()" title="Notes">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+</button>
+
+<!-- Notepad popup -->
+<div class="notepad-popup hidden" id="notepad-popup">
+  <div class="notepad-header">
+    <span>📝 Notes</span>
+    <button class="notepad-close" onclick="toggleNotepad()">✕</button>
+  </div>
+  <textarea class="notepad-textarea" id="notepad-text" placeholder="Jot down thoughts, plans, targets…&#10;&#10;e.g. Sell Breakout cases when price hits €15&#10;Buy more Kilowatt if drops below €0.15" oninput="saveNotepad()"></textarea>
+  <div class="notepad-footer" id="notepad-saved">Auto-saved</div>
 </div>
 
 <!-- Add/Edit modal -->
@@ -369,6 +420,42 @@ function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(items));
   sbSave(); // persist to Supabase
 }
+
+// ─── Price history — record a snapshot whenever prices are refreshed ──────────
+const HISTORY_KEY = 'cs2_price_history_v1';
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function recordPriceSnapshot() {
+  const history = loadHistory();
+  const now = new Date().toISOString();
+  items.forEach(item => {
+    if (!item.priceTs) return; // skip items with no live price
+    if (!history[item.name]) history[item.name] = [];
+    // Avoid duplicate entries within same hour
+    const lastEntry = history[item.name].slice(-1)[0];
+    if (lastEntry && new Date(lastEntry.ts) > new Date(Date.now() - 60 * 60 * 1000)) return;
+    history[item.name].push({ ts: now, price: item.marketPrice, source: item.priceSource || 'unknown' });
+    // Keep max 365 entries per item
+    if (history[item.name].length > 365) history[item.name] = history[item.name].slice(-365);
+  });
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  // Also save history to Supabase
+  sbSaveHistory(history);
+}
+
+async function sbSaveHistory(history) {
+  try {
+    await fetch(`${SB_URL}/rest/v1/cs2_portfolio?user_id=eq.${SB_USER}`, {
+      method: 'PATCH',
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ price_history: history })
+    });
+  } catch {}
+}
 function load() {
   // Try localStorage first for instant display, then sync from Supabase
   try { items = JSON.parse(localStorage.getItem(LS_KEY)) || defaultItems(); }
@@ -379,11 +466,12 @@ async function loadFromSupabase() {
   const sbItems = await sbLoad();
   if (sbItems) {
     items = sbItems;
-    localStorage.setItem(LS_KEY, JSON.stringify(items)); // sync back to localStorage
+    localStorage.setItem(LS_KEY, JSON.stringify(items));
     render();
     renderCharts();
     toast('✓ Loaded from Supabase');
   }
+  await loadNotepadFromSupabase();
 }
 function defaultItems() {
   return [
@@ -730,6 +818,7 @@ async function refreshAllPrices() {
         else if (r && r.error) failed.push(`${name}: ${r.error}`);
       });
       renderCharts();
+      recordPriceSnapshot();
       toast(`✓ ${updated}/${uniqueNames.length} updated — exact EUR from Steam${failed.length ? ` · ${failed.length} failed` : ''}`);
       // Skip proxy section
       await fetchMissingIcons(btn);
@@ -771,6 +860,7 @@ async function refreshAllPrices() {
       }
     });
     save(); render(); renderCharts();
+    recordPriceSnapshot();
     toast(`✓ ${updated}/${uniqueNames.length} updated (~EUR estimate)${failed.length ? ` · ${failed.length} failed` : ''}`);
   } catch (e) {
     toast(`Proxy error: ${e.message}`, true);
@@ -855,6 +945,7 @@ function setTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
   event.currentTarget.classList.add('active');
   if (tab === 'charts') renderCharts();
+  if (tab === 'history') initHistoryTab();
 }
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
@@ -1045,6 +1136,181 @@ document.addEventListener('click', e => {
   }
 });
 
+// ─── Price history tab ────────────────────────────────────────────────────────
+let historyChartInst = null;
+
+function initHistoryTab() {
+  const select = document.getElementById('history-item-select');
+  const current = select.value;
+  select.innerHTML = '<option value="">— Select an item —</option>';
+  const history = loadHistory();
+  // Show all items, mark ones with history
+  items.forEach(item => {
+    const count = history[item.name]?.length || 0;
+    const opt = document.createElement('option');
+    opt.value = item.name;
+    opt.textContent = item.name + (count > 0 ? ` (${count} entries)` : ' — no history yet');
+    if (count === 0) opt.style.color = 'var(--muted)';
+    select.appendChild(opt);
+  });
+  if (current) select.value = current;
+  renderHistoryChart();
+}
+
+function renderHistoryChart() {
+  const name = document.getElementById('history-item-select').value;
+  const wrap = document.getElementById('history-chart-wrap');
+  const empty = document.getElementById('history-empty');
+  const countEl = document.getElementById('history-data-count');
+
+  if (!name) {
+    wrap.style.display = 'none';
+    empty.style.display = 'block';
+    countEl.textContent = '';
+    return;
+  }
+
+  const history = loadHistory();
+  const entries = history[name] || [];
+
+  if (entries.length === 0) {
+    wrap.style.display = 'none';
+    empty.style.display = 'block';
+    empty.innerHTML = `No price history yet for <strong>${name}</strong>.<br><small style="color:var(--muted);margin-top:6px;display:block">Prices are recorded each time you hit Refresh prices.</small>`;
+    countEl.textContent = '';
+    return;
+  }
+
+  wrap.style.display = 'block';
+  empty.style.display = 'none';
+  countEl.textContent = `${entries.length} data point${entries.length !== 1 ? 's' : ''}`;
+  document.getElementById('history-chart-title').textContent = `${name} — price over time`;
+
+  const labels = entries.map(e => {
+    const d = new Date(e.ts);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: entries.length > 30 ? '2-digit' : undefined });
+  });
+  const prices = entries.map(e => e.price);
+  const item = items.find(i => i.name === name);
+  const buyPrice = item?.buyPrice || null;
+
+  if (historyChartInst) historyChartInst.destroy();
+  const ctx = document.getElementById('history-chart').getContext('2d');
+
+  const datasets = [{
+    label: 'Steam price (€)',
+    data: prices,
+    borderColor: '#5b8af0',
+    backgroundColor: 'rgba(91,138,240,0.08)',
+    fill: true,
+    tension: 0.3,
+    pointRadius: entries.length < 30 ? 4 : 2,
+    pointHoverRadius: 6,
+    borderWidth: 2,
+  }];
+
+  if (buyPrice) {
+    datasets.push({
+      label: `Buy price (€${buyPrice.toFixed(2)})`,
+      data: Array(entries.length).fill(buyPrice),
+      borderColor: 'rgba(232,184,75,0.5)',
+      borderWidth: 1.5,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      fill: false,
+    });
+  }
+
+  historyChartInst = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#7a8099', font: { size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` €${ctx.parsed.y.toFixed(2)}`,
+            afterBody: (items) => {
+              const idx = items[0]?.dataIndex;
+              const entry = entries[idx];
+              return entry?.source ? [`source: ${entry.source}`] : [];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#7a8099', font: { size: 11 }, maxRotation: 35, autoSkip: true, maxTicksLimit: 12 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7a8099', callback: v => '€' + v.toFixed(2), font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+}
+
+// ─── Notepad ──────────────────────────────────────────────────────────────────
+const NOTEPAD_KEY = 'cs2_notepad_v1';
+let notepadSaveTimer = null;
+
+function toggleNotepad() {
+  const popup = document.getElementById('notepad-popup');
+  popup.classList.toggle('hidden');
+  if (!popup.classList.contains('hidden')) {
+    // Load content
+    document.getElementById('notepad-text').value = localStorage.getItem(NOTEPAD_KEY) || '';
+    document.getElementById('notepad-text').focus();
+  }
+}
+
+function saveNotepad() {
+  clearTimeout(notepadSaveTimer);
+  notepadSaveTimer = setTimeout(() => {
+    const text = document.getElementById('notepad-text').value;
+    localStorage.setItem(NOTEPAD_KEY, text);
+    // Save to Supabase too
+    fetch(`${SB_URL}/rest/v1/cs2_portfolio?user_id=eq.${SB_USER}`, {
+      method: 'PATCH',
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: text })
+    }).catch(() => {});
+    const footer = document.getElementById('notepad-saved');
+    footer.textContent = 'Saved ' + new Date().toLocaleTimeString();
+  }, 800);
+}
+
+// Load notepad from Supabase on startup
+async function loadNotepadFromSupabase() {
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/cs2_portfolio?user_id=eq.${SB_USER}&select=notes,price_history`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+    });
+    const data = await res.json();
+    if (data?.[0]?.notes) {
+      localStorage.setItem(NOTEPAD_KEY, data[0].notes);
+    }
+    if (data?.[0]?.price_history) {
+      // Merge remote history with local (remote wins for older data)
+      const remote = data[0].price_history;
+      const local = loadHistory();
+      const merged = { ...remote };
+      Object.keys(local).forEach(name => {
+        if (!merged[name]) merged[name] = local[name];
+        else {
+          // Combine and dedupe by timestamp
+          const combined = [...merged[name], ...local[name]];
+          const seen = new Set();
+          merged[name] = combined.filter(e => {
+            const key = e.ts.slice(0, 13); // dedupe by hour
+            if (seen.has(key)) return false;
+            seen.add(key); return true;
+          }).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+        }
+      });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
+    }
+  } catch {}
+}
+
 // ─── Init ──────────────────────────────────────────────────────────────────────
 function resetData() {
   if (!confirm('Reset all data to defaults? This will clear any items you added or edited.')) return;
@@ -1059,6 +1325,10 @@ load();
 render();
 // Load from Supabase in background — updates if remote has newer data
 loadFromSupabase();
+
+// Restore notepad text from localStorage immediately
+const savedNote = localStorage.getItem(NOTEPAD_KEY);
+if (savedNote) document.getElementById('notepad-text').value = savedNote;
 </script>
 </body>
 </html>
