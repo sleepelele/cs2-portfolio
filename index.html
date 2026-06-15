@@ -587,9 +587,13 @@ function recordPriceSnapshot() {
   items.forEach(item => {
     if (!item.priceTs) return; // skip items with no live price
     if (!history[item.name]) history[item.name] = [];
-    // Avoid duplicate entries within same hour
+    // Avoid duplicate entries within same calendar day
     const lastEntry = history[item.name].slice(-1)[0];
-    if (lastEntry && new Date(lastEntry.ts) > new Date(Date.now() - 60 * 60 * 1000)) return;
+    if (lastEntry) {
+      const lastDate = new Date(lastEntry.ts).toDateString();
+      const today = new Date().toDateString();
+      if (lastDate === today) return; // already have a snapshot for today
+    }
     history[item.name].push({ ts: now, price: item.marketPrice, source: item.priceSource || 'unknown' });
     // Keep max 365 entries per item
     if (history[item.name].length > 365) history[item.name] = history[item.name].slice(-365);
@@ -1345,6 +1349,21 @@ function renderCharts() {
         if (els.length) {
           const r = top10[els[0].index];
           toast(`${r.name}: ${fmtPL(r.unrealisedPL)} unrealised`);
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(24,28,37,0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          titleColor: '#e8eaf0',
+          bodyColor: '#7a8099',
+          padding: 10,
+          callbacks: {
+            title: ctx => top10[ctx[0].dataIndex]?.name || '',
+            label: ctx => ` Unrealised P/L: ${fmtPL(ctx.parsed.x)}`
+          }
         }
       }
     }
