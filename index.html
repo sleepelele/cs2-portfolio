@@ -271,16 +271,26 @@
 
   <div id="tab-history" class="tab-content">
     <div class="history-controls">
-      <select class="history-select" id="history-item-select" onchange="renderHistoryChart()">
-        <option value="">— Select an item —</option>
+      <select class="history-select" id="history-group-select" onchange="onHistoryGroupChange()">
+        <option value="all">All items (portfolio total value)</option>
+        <option value="Case">Cases</option>
+        <option value="Weapon">Weapons</option>
+        <option value="Skin">Skins</option>
+        <option value="Pass">Passes</option>
+        <option value="Sticker">Stickers</option>
+        <option value="Other">Other</option>
+        <option value="item">— Specific item… —</option>
+      </select>
+      <select class="history-select" id="history-item-select" onchange="renderHistoryChart()" style="display:none">
+        <option value="">— Select item —</option>
       </select>
       <span style="font-size:12px;color:var(--muted)" id="history-data-count"></span>
     </div>
     <div id="history-chart-wrap" class="chart-card" style="display:none">
       <div class="chart-title" id="history-chart-title"></div>
-      <div class="chart-wrap" style="height:320px"><canvas id="history-chart" role="img" aria-label="Price history line chart"></canvas></div>
+      <div class="chart-wrap" style="height:360px"><canvas id="history-chart" role="img" aria-label="Price history line chart"></canvas></div>
     </div>
-    <div class="history-empty" id="history-empty">Select an item above to see its price history.<br><small style="color:var(--muted);margin-top:6px;display:block">Prices are recorded each time you hit Refresh prices.</small></div>
+    <div class="history-empty" id="history-empty">Select a group or item above to see price history.<br><small style="color:var(--muted);margin-top:6px;display:block">Prices are recorded each time you hit Refresh prices.</small></div>
   </div>
 </div>
 
@@ -1231,87 +1241,202 @@ document.addEventListener('click', e => {
 let historyChartInst = null;
 
 function initHistoryTab() {
-  const select = document.getElementById('history-item-select');
-  const current = select.value;
-  select.innerHTML = '<option value="">— Select an item —</option>';
+  // Populate item dropdown
+  const itemSel = document.getElementById('history-item-select');
+  const current = itemSel.value;
+  itemSel.innerHTML = '<option value="">— Select item —</option>';
   const history = loadHistory();
-  // Show all items, mark ones with history
-  items.forEach(item => {
-    const count = history[item.name]?.length || 0;
-    const opt = document.createElement('option');
-    opt.value = item.name;
-    opt.textContent = item.name + (count > 0 ? ` (${count} entries)` : ' — no history yet');
-    if (count === 0) opt.style.color = 'var(--muted)';
-    select.appendChild(opt);
+  const types = [...new Set(items.map(i => i.type))].sort();
+  types.forEach(type => {
+    const group = document.createElement('optgroup');
+    group.label = type + 's';
+    items.filter(i => i.type === type).forEach(item => {
+      const count = history[item.name]?.length || 0;
+      const opt = document.createElement('option');
+      opt.value = item.name;
+      opt.textContent = item.name + (count > 0 ? ` (${count})` : ' — no data');
+      if (count === 0) opt.style.color = 'var(--muted)';
+      group.appendChild(opt);
+    });
+    itemSel.appendChild(group);
   });
-  if (current) select.value = current;
+  if (current) itemSel.value = current;
   renderHistoryChart();
 }
 
+function onHistoryGroupChange() {
+  const group = document.getElementById('history-group-select').value;
+  const itemSel = document.getElementById('history-item-select');
+  itemSel.style.display = group === 'item' ? '' : 'none';
+  if (group !== 'item') renderHistoryChart();
+}
+
 function renderHistoryChart() {
-  const name = document.getElementById('history-item-select').value;
+  const group = document.getElementById('history-group-select').value;
+  const specificItem = document.getElementById('history-item-select').value;
   const wrap = document.getElementById('history-chart-wrap');
   const empty = document.getElementById('history-empty');
   const countEl = document.getElementById('history-data-count');
 
-  if (!name) {
+  if (group === 'item' && !specificItem) {
     wrap.style.display = 'none';
     empty.style.display = 'block';
+    empty.innerHTML = 'Select a specific item from the dropdown.';
     countEl.textContent = '';
     return;
   }
 
   const history = loadHistory();
-  const entries = history[name] || [];
+  const PALETTE = ['#5b8af0','#4caf7d','#e8b84b','#e05c5c','#c08ef0','#f07878','#50c8e0','#a0e070','#f0a050'];
 
-  if (entries.length === 0) {
+  // Determine which items to include
+  let targetItems;
+  if (group === 'all') targetItems = items;
+  else if (group === 'item') targetItems = items.filter(i => i.name === specificItem);
+  else targetItems = items.filter(i => i.type === group);
+
+  if (targetItems.length === 0) {
     wrap.style.display = 'none';
     empty.style.display = 'block';
-    empty.innerHTML = `No price history yet for <strong>${name}</strong>.<br><small style="color:var(--muted);margin-top:6px;display:block">Prices are recorded each time you hit Refresh prices.</small>`;
+    empty.innerHTML = 'No items in this group yet.';
     countEl.textContent = '';
     return;
   }
 
-  wrap.style.display = 'block';
-  empty.style.display = 'none';
-  countEl.textContent = `${entries.length} data point${entries.length !== 1 ? 's' : ''}`;
-  document.getElementById('history-chart-title').textContent = `${name} — price over time`;
+  // For group/all views: aggregate total portfolio value over time
+  // For single item: show price + buy price line
+  const isSingle = group === 'item' || (targetItems.length === 1);
 
-  const labels = entries.map(e => {
-    const d = new Date(e.ts);
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: entries.length > 30 ? '2-digit' : undefined });
-  });
-  const prices = entries.map(e => e.price);
-  const item = items.find(i => i.name === name);
-  const buyPrice = item?.buyPrice || null;
+  if (isSingle) {
+    const item = targetItems[0];
+    const entries = history[item.name] || [];
+    if (entries.length === 0) {
+      wrap.style.display = 'none';
+      empty.style.display = 'block';
+      empty.innerHTML = `No price history yet for <strong>${item.name}</strong>.<br><small style="color:var(--muted);margin-top:6px;display:block">Hit Refresh prices to start recording.</small>`;
+      countEl.textContent = '';
+      return;
+    }
 
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+    countEl.textContent = `${entries.length} data point${entries.length !== 1 ? 's' : ''}`;
+    document.getElementById('history-chart-title').textContent = `${item.name} — price over time`;
+
+    const labels = entries.map(e => fmtHistoryDate(e.ts, entries.length));
+    const prices = entries.map(e => e.price);
+
+    const datasets = [{
+      label: 'Steam price (€)',
+      data: prices,
+      borderColor: '#5b8af0',
+      backgroundColor: 'rgba(91,138,240,0.08)',
+      fill: true, tension: 0.3,
+      pointRadius: entries.length < 30 ? 4 : 2,
+      pointHoverRadius: 6, borderWidth: 2,
+    }];
+    if (item.buyPrice) {
+      datasets.push({
+        label: `Buy price (€${item.buyPrice.toFixed(2)})`,
+        data: Array(entries.length).fill(item.buyPrice),
+        borderColor: 'rgba(232,184,75,0.6)', borderWidth: 1.5,
+        borderDash: [6, 4], pointRadius: 0, fill: false,
+      });
+    }
+    if (item.targetPrice) {
+      datasets.push({
+        label: `Target (€${item.targetPrice.toFixed(2)})`,
+        data: Array(entries.length).fill(item.targetPrice),
+        borderColor: 'rgba(76,175,125,0.6)', borderWidth: 1.5,
+        borderDash: [3, 3], pointRadius: 0, fill: false,
+      });
+    }
+
+    drawHistoryChart(labels, datasets, entries, 'price');
+
+  } else {
+    // Group view — show each item as its own line (total value = qty × price)
+    // Collect all timestamps across all items in group
+    const allTimestamps = new Set();
+    targetItems.forEach(item => {
+      (history[item.name] || []).forEach(e => allTimestamps.add(e.ts.slice(0, 13))); // hour bucket
+    });
+    const sortedTs = [...allTimestamps].sort();
+
+    if (sortedTs.length === 0) {
+      wrap.style.display = 'none';
+      empty.style.display = 'block';
+      empty.innerHTML = 'No price history yet for this group.<br><small style="color:var(--muted);margin-top:6px;display:block">Hit Refresh prices to start recording.</small>';
+      countEl.textContent = '';
+      return;
+    }
+
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+
+    // For each timestamp, compute total value of this group
+    const labels = sortedTs.map(ts => fmtHistoryDate(ts + ':00:00Z', sortedTs.length));
+
+    // Two modes: if ≤6 items in group, show each as a line; otherwise show only total
+    const showIndividual = targetItems.length <= 6;
+    const datasets = [];
+
+    if (showIndividual) {
+      targetItems.forEach((item, i) => {
+        const itemHistory = history[item.name] || [];
+        const data = sortedTs.map(ts => {
+          // Find closest entry at or before this timestamp
+          const matches = itemHistory.filter(e => e.ts.slice(0, 13) <= ts);
+          if (!matches.length) return null;
+          const entry = matches[matches.length - 1];
+          return parseFloat((entry.price * item.qty).toFixed(2));
+        });
+        datasets.push({
+          label: item.name.replace(/ Case$/, '').replace('Operation ', 'Op.'),
+          data, borderColor: PALETTE[i % PALETTE.length],
+          backgroundColor: 'transparent',
+          tension: 0.3, pointRadius: 2, pointHoverRadius: 5,
+          borderWidth: 2, spanGaps: true,
+        });
+      });
+    }
+
+    // Always add total line
+    const totalData = sortedTs.map(ts => {
+      let total = 0;
+      targetItems.forEach(item => {
+        const itemHistory = history[item.name] || [];
+        const matches = itemHistory.filter(e => e.ts.slice(0, 13) <= ts);
+        if (matches.length) total += matches[matches.length - 1].price * item.qty;
+      });
+      return parseFloat(total.toFixed(2));
+    });
+    datasets.push({
+      label: group === 'all' ? 'Total portfolio value' : `Total ${group}s value`,
+      data: totalData,
+      borderColor: '#e8b84b',
+      backgroundColor: 'rgba(232,184,75,0.06)',
+      fill: showIndividual ? false : true,
+      tension: 0.3, pointRadius: sortedTs.length < 20 ? 4 : 2,
+      pointHoverRadius: 6, borderWidth: showIndividual ? 2 : 2.5,
+      borderDash: showIndividual ? [5, 3] : [],
+    });
+
+    const groupName = group === 'all' ? 'All items' : group + 's';
+    document.getElementById('history-chart-title').textContent = `${groupName} — portfolio value over time`;
+    countEl.textContent = `${sortedTs.length} snapshots · ${targetItems.length} items`;
+    drawHistoryChart(labels, datasets, null, 'value');
+  }
+}
+
+function fmtHistoryDate(ts, total) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: total > 30 ? '2-digit' : undefined });
+}
+
+function drawHistoryChart(labels, datasets, entries, mode) {
   if (historyChartInst) historyChartInst.destroy();
   const ctx = document.getElementById('history-chart').getContext('2d');
-
-  const datasets = [{
-    label: 'Steam price (€)',
-    data: prices,
-    borderColor: '#5b8af0',
-    backgroundColor: 'rgba(91,138,240,0.08)',
-    fill: true,
-    tension: 0.3,
-    pointRadius: entries.length < 30 ? 4 : 2,
-    pointHoverRadius: 6,
-    borderWidth: 2,
-  }];
-
-  if (buyPrice) {
-    datasets.push({
-      label: `Buy price (€${buyPrice.toFixed(2)})`,
-      data: Array(entries.length).fill(buyPrice),
-      borderColor: 'rgba(232,184,75,0.5)',
-      borderWidth: 1.5,
-      borderDash: [6, 4],
-      pointRadius: 0,
-      fill: false,
-    });
-  }
-
   historyChartInst = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
@@ -1319,14 +1444,14 @@ function renderHistoryChart() {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: true, labels: { color: '#7a8099', font: { size: 11 }, boxWidth: 12 } },
+        legend: { display: datasets.length > 1, labels: { color: '#7a8099', font: { size: 11 }, boxWidth: 12 } },
         tooltip: {
           callbacks: {
-            label: ctx => ` €${ctx.parsed.y.toFixed(2)}`,
-            afterBody: (items) => {
-              const idx = items[0]?.dataIndex;
-              const entry = entries[idx];
-              return entry?.source ? [`source: ${entry.source}`] : [];
+            label: ctx => ` ${ctx.dataset.label}: €${ctx.parsed.y?.toFixed(2) ?? '—'}`,
+            afterBody: (ctxItems) => {
+              if (!entries) return [];
+              const idx = ctxItems[0]?.dataIndex;
+              return entries?.[idx]?.source ? [`source: ${entries[idx].source}`] : [];
             }
           }
         }
