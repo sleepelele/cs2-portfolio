@@ -719,8 +719,11 @@ function render() {
           <div class="price-cell">
             <span class="${stale ? 'live-dot stale' : 'live-dot'}" title="${stale ? 'Manual price' : 'Fetched · source: ' + (r.priceSource || 'unknown')}"></span>
             <input class="price-input" type="number" step="0.01" min="0" value="${r.marketPrice.toFixed(2)}"
-              onchange="updatePrice(${origIdx}, this.value)" />
-            <button class="btn btn-sm fetch-btn" onclick="fetchOne(${origIdx})" title="Fetch from Steam · current source: ${r.priceSource || 'manual'}">↻</button>
+              onchange="updatePrice(${origIdx}, this.value)" ${r.priceLocked ? 'style="opacity:0.5"' : ''} />
+            <button class="btn btn-sm fetch-btn" onclick="fetchOne(${origIdx})" title="Fetch from Steam" ${r.priceLocked ? 'style="display:none"' : ''}>↻</button>
+            <button class="btn btn-sm" onclick="togglePriceLock(${origIdx})" title="${r.priceLocked ? 'Price locked — click to unlock' : 'Click to lock price (skip on refresh)'}" style="padding:3px 6px;font-size:13px;color:${r.priceLocked ? 'var(--accent)' : 'var(--muted)'};background:none;border:none;cursor:pointer">
+              ${r.priceLocked ? '🔒' : '🔓'}
+            </button>
           </div>
         </td>
         <td class="mono">${fmtEur(r.marketValue)}</td>
@@ -793,9 +796,17 @@ function updatePrice(idx, val) {
   render();
 }
 
+function togglePriceLock(idx) {
+  items[idx].priceLocked = !items[idx].priceLocked;
+  save();
+  render();
+  toast(items[idx].priceLocked ? `🔒 Price locked — won't update on refresh` : `🔓 Price unlocked`);
+}
+
 // ─── Single price fetch — extension first, proxy fallback ────────────────────
 async function fetchOne(idx) {
   const item = items[idx];
+  if (item.priceLocked) { toast(`${item.name} is price-locked — unlock first`, true); return; }
   toast(`Fetching ${item.name}…`);
 
   // Try extension first (exact EUR)
@@ -929,7 +940,7 @@ function fetchAllPricesViaExtension(names, onProgress) {
 async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
-  const uniqueNames = [...new Set(items.map(i => i.name))];
+  const uniqueNames = [...new Set(items.filter(i => !i.priceLocked).map(i => i.name))];
   const secs = Math.round(uniqueNames.length * 1.5);
 
   // ── Use extension if available (exact EUR) ────────────────────────────────
@@ -939,10 +950,10 @@ async function refreshAllPrices() {
     try {
       const results = await fetchAllPricesViaExtension(uniqueNames, (progress) => {
         btn.textContent = `Fetching ${progress.index}/${progress.total}…`;
-        // Apply price as it comes in
+        // Apply price as it comes in (skip locked items)
         if (progress.result && progress.result.lowest_price != null) {
           items.forEach(item => {
-            if (item.name === progress.name) {
+            if (item.name === progress.name && !item.priceLocked) {
               item.marketPrice = progress.result.lowest_price;
               item.priceTs = Date.now();
               item.priceSource = 'steam_eur_extension';
@@ -983,6 +994,7 @@ async function refreshAllPrices() {
     const data = await res.json();
     let updated = 0, failed = [];
     items.forEach(item => {
+      if (item.priceLocked) return; // skip locked items
       const r = data[item.name];
       if (r && r.lowest_price != null) {
         item.marketPrice = r.lowest_price;
