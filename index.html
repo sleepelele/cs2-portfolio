@@ -516,9 +516,12 @@ function render() {
   // Status bar
   const hasAnyPrice = items.some(i => i.priceTs);
   const lastTs = hasAnyPrice ? Math.max(...items.filter(i => i.priceTs).map(i => i.priceTs)) : null;
+  // Extension badge
+  let extBadgeHtml = '<span id="ext-badge" style="margin-left:auto;font-size:11px"></span>';
   document.getElementById('status-bar').innerHTML = lastTs
-    ? `<span class="live-dot"></span> Prices last refreshed ${fmtAge(lastTs)} · <span style="color:var(--muted)">manual edits override fetched price</span>`
-    : `<span class="live-dot stale"></span> No live prices yet — hit "Refresh prices" to fetch from Steam`;
+    ? `<span class="live-dot"></span> Prices last refreshed ${fmtAge(lastTs)} · <span style="color:var(--muted)">manual edits override fetched price</span><span id="ext-badge" style="margin-left:auto;font-size:11px"></span>`
+    : `<span class="live-dot stale"></span> No live prices yet — hit "Refresh prices" to fetch from Steam<span id="ext-badge" style="margin-left:auto;font-size:11px"></span>`;
+  updateExtBadge();
 
   updateLastUpdated();
 }
@@ -563,10 +566,27 @@ function updatePrice(idx, val) {
   render();
 }
 
-// ─── Single price fetch via proxy ────────────────────────────────────────────
+// ─── Single price fetch — extension first, proxy fallback ────────────────────
 async function fetchOne(idx) {
   const item = items[idx];
   toast(`Fetching ${item.name}…`);
+
+  // Try extension first (exact EUR)
+  if (extensionAvailable) {
+    try {
+      const data = await fetchPriceViaExtension(item.name);
+      if (data.lowest_price != null) {
+        items[idx].marketPrice = data.lowest_price;
+        items[idx].priceTs = Date.now();
+        items[idx].priceSource = 'steam_eur_extension';
+        save(); render();
+        toast(`✓ ${item.name}: €${data.lowest_price.toFixed(2)} (exact EUR)`);
+        return;
+      }
+    } catch (e) { console.warn('Extension fetch failed, falling back to proxy:', e.message); }
+  }
+
+  // Fallback: proxy + USD→EUR conversion
   try {
     const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
     if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
@@ -580,7 +600,7 @@ async function fetchOne(idx) {
       items[idx].priceTs = Date.now();
       items[idx].priceSource = data.source || 'proxy';
       save(); render();
-      toast(`✓ ${item.name}: €${price.toFixed(2)}`);
+      toast(`✓ ${item.name}: €${price.toFixed(2)} (~EUR estimate)`);
     } else {
       toast(`Not found: ${item.name}`, true);
     }
@@ -589,33 +609,143 @@ async function fetchOne(idx) {
   }
 }
 
-// ─── EUR/USD rate — fetched live from exchangerate.host (free, no key) ─────────
+// ─── EUR/USD rate — fetched live from frankfurter.app ────────────────────────
 let cachedEurRate = null;
 let eurRateTs = 0;
 async function getEurRate() {
-  if (cachedEurRate && Date.now() - eurRateTs < 60 * 60 * 1000) return cachedEurRate; // cache 1hr
+  if (cachedEurRate && Date.now() - eurRateTs < 60 * 60 * 1000) return cachedEurRate;
   try {
     const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR');
     const data = await res.json();
     cachedEurRate = data.rates.EUR;
     eurRateTs = Date.now();
     return cachedEurRate;
-  } catch {
-    return cachedEurRate || 0.92; // fallback if fetch fails
+  } catch { return cachedEurRate || 0.92; }
+}
+
+// ─── Chrome extension bridge ───────────────────────────────────────────────────
+let extensionAvailable = false;
+
+// Check if extension is installed on page load
+window.addEventListener('message', (e) => {
+  if (e.data.type === 'CS2_EXT_READY') {
+    extensionAvailable = true;
+    updateExtBadge();
   }
+  if (e.data.type === 'CS2_PONG') {
+    extensionAvailable = true;
+    updateExtBadge();
+  }
+});
+
+function updateExtBadge() {
+  const badge = document.getElementById('ext-badge');
+  if (!badge) return;
+  if (extensionAvailable) {
+    badge.textContent = '⚡ Extension active — exact EUR';
+    badge.style.color = 'var(--green)';
+  } else {
+    badge.textContent = '○ No extension — using ~EUR estimate';
+    badge.style.color = 'var(--muted)';
+  }
+}
+
+// Ping extension to check if installed
+setTimeout(() => {
+  window.postMessage({ type: 'CS2_PING' }, '*');
+  setTimeout(updateExtBadge, 500); // if no pong, stays unavailable
+}, 500);
+
+// Fetch single price via extension
+function fetchPriceViaExtension(name) {
+  return new Promise((resolve, reject) => {
+    const requestId = Math.random().toString(36).slice(2);
+    const handler = (e) => {
+      if (e.data.type === 'CS2_PRICE_RESULT' && e.data.requestId === requestId) {
+        window.removeEventListener('message', handler);
+        if (e.data.ok) resolve(e.data.data);
+        else reject(new Error(e.data.error));
+      }
+    };
+    window.addEventListener('message', handler);
+    window.postMessage({ type: 'CS2_FETCH_PRICE', name, requestId }, '*');
+    setTimeout(() => { window.removeEventListener('message', handler); reject(new Error('timeout')); }, 10000);
+  });
+}
+
+// Fetch all prices via extension with live progress
+function fetchAllPricesViaExtension(names, onProgress) {
+  return new Promise((resolve, reject) => {
+    const requestId = Math.random().toString(36).slice(2);
+    const progressHandler = (e) => {
+      if (e.data.type === 'PRICE_PROGRESS') onProgress(e.data);
+    };
+    const resultHandler = (e) => {
+      if (e.data.type === 'CS2_PRICES_BATCH_RESULT' && e.data.requestId === requestId) {
+        window.removeEventListener('message', progressHandler);
+        window.removeEventListener('message', resultHandler);
+        if (e.data.ok) resolve(e.data.results);
+        else reject(new Error(e.data.error));
+      }
+    };
+    window.addEventListener('message', progressHandler);
+    window.addEventListener('message', resultHandler);
+    window.postMessage({ type: 'CS2_FETCH_PRICES_BATCH', names, requestId }, '*');
+    setTimeout(() => {
+      window.removeEventListener('message', progressHandler);
+      window.removeEventListener('message', resultHandler);
+      reject(new Error('timeout'));
+    }, names.length * 3000);
+  });
 }
 
 async function refreshAllPrices() {
   const btn = document.getElementById('refresh-all-btn');
   btn.disabled = true;
   const uniqueNames = [...new Set(items.map(i => i.name))];
-  toast(`Fetching ${uniqueNames.length} prices…`);
+  const secs = Math.round(uniqueNames.length * 1.5);
+
+  // ── Use extension if available (exact EUR) ────────────────────────────────
+  if (extensionAvailable) {
+    toast(`Fetching ${uniqueNames.length} prices via extension (exact EUR)…`);
+    btn.textContent = 'Fetching 0/' + uniqueNames.length + '…';
+    try {
+      const results = await fetchAllPricesViaExtension(uniqueNames, (progress) => {
+        btn.textContent = `Fetching ${progress.index}/${progress.total}…`;
+        // Apply price as it comes in
+        if (progress.result && progress.result.lowest_price != null) {
+          items.forEach(item => {
+            if (item.name === progress.name) {
+              item.marketPrice = progress.result.lowest_price;
+              item.priceTs = Date.now();
+              item.priceSource = 'steam_eur_extension';
+            }
+          });
+          save(); render();
+        }
+      });
+      let updated = 0, failed = [];
+      Object.entries(results).forEach(([name, r]) => {
+        if (r && r.lowest_price != null) updated++;
+        else if (r && r.error) failed.push(`${name}: ${r.error}`);
+      });
+      renderCharts();
+      toast(`✓ ${updated}/${uniqueNames.length} updated — exact EUR from Steam${failed.length ? ` · ${failed.length} failed` : ''}`);
+      // Skip proxy section
+      await fetchMissingIcons(btn);
+      btn.disabled = false;
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh prices`;
+      return;
+    } catch (e) {
+      console.warn('Extension batch failed, falling back to proxy:', e.message);
+    }
+  }
+
+  // ── Fallback: proxy + USD→EUR ─────────────────────────────────────────────
+  toast(`Fetching ${uniqueNames.length} prices via proxy (~${secs}s)…`);
   btn.textContent = 'Fetching prices…';
-
   try {
-    // Get live EUR rate first
     const eurRate = await getEurRate();
-
     const res = await fetch(`${PROXY_URL}/prices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -623,7 +753,6 @@ async function refreshAllPrices() {
     });
     if (!res.ok) throw new Error(`Proxy ${res.status}`);
     const data = await res.json();
-
     let updated = 0, failed = [];
     items.forEach(item => {
       const r = data[item.name];
@@ -635,32 +764,33 @@ async function refreshAllPrices() {
       } else if (r && r.lowest_price_usd != null) {
         item.marketPrice = parseFloat((r.lowest_price_usd * eurRate).toFixed(2));
         item.priceTs = Date.now();
-        item.priceSource = `${r.source || 'steamapis'} (€${eurRate.toFixed(4)}/USD)`;
+        item.priceSource = `steamapis (~EUR)`;
         updated++;
       } else if (r && r.error) {
         failed.push(`${item.name}: ${r.error}`);
       }
     });
     save(); render(); renderCharts();
-    toast(`✓ ${updated}/${uniqueNames.length} updated at €1=$${(1/eurRate).toFixed(3)}${failed.length ? ` · ${failed.length} failed` : ''}`);
+    toast(`✓ ${updated}/${uniqueNames.length} updated (~EUR estimate)${failed.length ? ` · ${failed.length} failed` : ''}`);
   } catch (e) {
     toast(`Proxy error: ${e.message}`, true);
   }
 
-  // Icons
-  const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
-  if (missing.length) {
-    btn.textContent = 'Fetching icons…';
-    try {
-      const res = await fetch(`${PROXY_URL}/icons`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names: missing }) });
-      const icons = await res.json();
-      items.forEach(item => { if (!item.icon && icons[item.name]) item.icon = icons[item.name]; });
-      save(); render();
-    } catch {}
-  }
-
+  await fetchMissingIcons(btn);
   btn.disabled = false;
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh prices`;
+}
+
+async function fetchMissingIcons(btn) {
+  const missing = [...new Set(items.filter(i => !i.icon).map(i => i.name))];
+  if (!missing.length) return;
+  if (btn) btn.textContent = 'Fetching icons…';
+  try {
+    const res = await fetch(`${PROXY_URL}/icons`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names: missing }) });
+    const icons = await res.json();
+    items.forEach(item => { if (!item.icon && icons[item.name]) item.icon = icons[item.name]; });
+    save(); render();
+  } catch {}
 }
 
 // ─── CRUD ──────────────────────────────────────────────────────────────────────
