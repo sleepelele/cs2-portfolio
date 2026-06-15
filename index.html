@@ -283,19 +283,75 @@
   </div>
 
   <div id="tab-charts" class="tab-content">
-    <div class="charts-grid">
+    <!-- Chart controls -->
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+      <select class="filter-select" id="chart-group-filter" onchange="renderCharts()">
+        <option value="all">All types</option>
+        <option value="Case">Cases</option>
+        <option value="Weapon">Weapons</option>
+        <option value="Skin">Skins</option>
+        <option value="Pass">Passes</option>
+        <option value="Sticker">Stickers</option>
+        <option value="Other">Other</option>
+      </select>
+      <select class="filter-select" id="chart-sort" onchange="renderCharts()">
+        <option value="roi">Sort by ROI</option>
+        <option value="value">Sort by Value</option>
+        <option value="invested">Sort by Invested</option>
+        <option value="name">Sort by Name</option>
+      </select>
+      <label class="toggle-fee" style="margin-left:0;font-size:12px">
+        <input type="checkbox" id="chart-hide-sold" onchange="renderCharts()" />
+        Hide fully sold
+      </label>
+      <span id="chart-item-count" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
+    </div>
+
+    <!-- Summary cards row -->
+    <div id="chart-summary-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px"></div>
+
+    <!-- ROI bar chart — full width, scrollable -->
+    <div class="chart-card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="chart-title" style="margin-bottom:0">ROI per item</div>
+        <div style="display:flex;gap:6px">
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)"><span style="width:10px;height:10px;background:rgba(76,175,125,0.7);border-radius:2px;display:inline-block"></span>Profit</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)"><span style="width:10px;height:10px;background:rgba(224,92,92,0.7);border-radius:2px;display:inline-block"></span>Loss</span>
+        </div>
+      </div>
+      <div id="roi-chart-scroll" style="overflow-x:auto;padding-bottom:4px">
+        <div id="roi-chart-sizer" style="min-width:100%">
+          <canvas id="roi-chart" role="img" aria-label="ROI per item bar chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Donut + top items side by side -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
       <div class="chart-card">
-        <div class="chart-title">ROI per item (%)</div>
-        <div class="chart-wrap" style="height:300px"><canvas id="roi-chart" role="img" aria-label="ROI per item bar chart">ROI per item</canvas></div>
+        <div class="chart-title" style="margin-bottom:12px">Capital allocation by type</div>
+        <div style="height:220px;position:relative"><canvas id="alloc-chart"></canvas></div>
+        <div class="legend" id="alloc-legend" style="margin-top:12px"></div>
       </div>
       <div class="chart-card">
-        <div class="chart-title">Capital allocation</div>
-        <div class="chart-wrap" style="height:260px"><canvas id="alloc-chart" role="img" aria-label="Capital allocation donut chart">Capital allocation</canvas></div>
-        <div class="legend" id="alloc-legend"></div>
+        <div class="chart-title" style="margin-bottom:12px">Top 10 by unrealised P/L</div>
+        <div style="height:220px;position:relative"><canvas id="top-pl-chart"></canvas></div>
       </div>
-      <div class="chart-card" style="grid-column: 1 / -1;">
-        <div class="chart-title">Market value vs invested — per item</div>
-        <div class="chart-wrap" style="height:280px"><canvas id="compare-chart" role="img" aria-label="Grouped bar chart comparing invested vs market value per item">Invested vs value</canvas></div>
+    </div>
+
+    <!-- Invested vs value — scrollable -->
+    <div class="chart-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="chart-title" style="margin-bottom:0">Invested vs market value</div>
+        <div style="display:flex;gap:6px">
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)"><span style="width:10px;height:10px;background:rgba(91,138,240,0.6);border-radius:2px;display:inline-block"></span>Invested</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)"><span style="width:10px;height:10px;background:rgba(232,184,75,0.6);border-radius:2px;display:inline-block"></span>Market value</span>
+        </div>
+      </div>
+      <div id="compare-chart-scroll" style="overflow-x:auto;padding-bottom:4px">
+        <div id="compare-chart-sizer" style="min-width:100%">
+          <canvas id="compare-chart"></canvas>
+        </div>
       </div>
     </div>
   </div>
@@ -1147,83 +1203,199 @@ function setTab(tab) {
 }
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
+let topPlChartInst = null;
+
 function renderCharts() {
   const withFee = document.getElementById('fee-toggle').checked;
-  const rows = items.map(i => calcRow(i, withFee));
-  const labels = rows.map(r => r.name.replace(/ Case$/, '').replace('Operation ', 'Op.'));
+  const groupFilter = document.getElementById('chart-group-filter')?.value || 'all';
+  const sortBy = document.getElementById('chart-sort')?.value || 'roi';
+  const hideSold = document.getElementById('chart-hide-sold')?.checked;
+
+  // Filter and sort
+  let rows = items.map(i => calcRow(i, withFee));
+  if (groupFilter !== 'all') rows = rows.filter(r => r.type === groupFilter);
+  if (hideSold) rows = rows.filter(r => !r.fullySold);
+
+  // Sort
+  if (sortBy === 'roi') rows.sort((a, b) => b.roi - a.roi);
+  else if (sortBy === 'value') rows.sort((a, b) => b.marketValue - a.marketValue);
+  else if (sortBy === 'invested') rows.sort((a, b) => b.invested - a.invested);
+  else rows.sort((a, b) => a.name.localeCompare(b.name));
+
+  const count = rows.length;
+  document.getElementById('chart-item-count').textContent = `${count} item${count !== 1 ? 's' : ''}`;
+
+  const gc = 'rgba(255,255,255,0.06)';
+  const tc = '#7a8099';
+
+  // Shorten label
+  const shortLabel = name => name
+    .replace(/ Case$/, '').replace(/ Weapon Case$/, '').replace('Operation ', 'Op.')
+    .replace(' (Factory New)', ' FN').replace(' (Minimal Wear)', ' MW')
+    .replace(' (Field-Tested)', ' FT').replace(' (Well-Worn)', ' WW')
+    .replace(' (Battle-Scarred)', ' BS');
+
+  const labels = rows.map(r => shortLabel(r.name));
   const rois = rows.map(r => parseFloat(r.roi.toFixed(1)));
   const invested = rows.map(r => parseFloat(r.invested.toFixed(2)));
-  const values = rows.map(r => parseFloat(r.marketValue.toFixed(2)));
+  const values = rows.map(r => parseFloat(r.unrealisedValue.toFixed(2)));
+  const unrealisedPLs = rows.map(r => parseFloat(r.unrealisedPL.toFixed(2)));
 
-  const gridColor = 'rgba(255,255,255,0.06)';
-  const tickColor = '#7a8099';
+  // Dynamic width for scrollable charts
+  const BAR_WIDTH = 44;
+  const minWidth = Math.max(count * BAR_WIDTH, 400);
+  document.getElementById('roi-chart-sizer').style.width = minWidth + 'px';
+  document.getElementById('compare-chart-sizer').style.width = minWidth + 'px';
 
-  // ROI chart
+  const chartOpts = (yCallback) => ({
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(24,28,37,0.95)',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        titleColor: '#e8eaf0',
+        bodyColor: '#7a8099',
+        padding: 10,
+        callbacks: { title: ctx => rows[ctx[0].dataIndex]?.name || '' }
+      }
+    },
+    scales: {
+      x: { ticks: { color: tc, font: { size: 11 }, autoSkip: false, maxRotation: 45 }, grid: { display: false } },
+      y: { ticks: { color: tc, callback: yCallback, font: { size: 11 } }, grid: { color: gc } }
+    }
+  });
+
+  // ── ROI chart ─────────────────────────────────────────────────────────────
   if (roiChartInst) roiChartInst.destroy();
-  roiChartInst = new Chart(document.getElementById('roi-chart').getContext('2d'), {
+  const roiCtx = document.getElementById('roi-chart');
+  roiCtx.style.height = '260px';
+  roiChartInst = new Chart(roiCtx.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{
+      label: 'ROI %', data: rois,
+      backgroundColor: rois.map(v => v >= 0 ? 'rgba(76,175,125,0.75)' : 'rgba(224,92,92,0.75)'),
+      borderColor: rois.map(v => v >= 0 ? 'rgba(76,175,125,1)' : 'rgba(224,92,92,1)'),
+      borderWidth: 1, borderRadius: 4,
+    }]},
+    options: {
+      ...chartOpts(v => v + '%'),
+      onClick: (e, els) => {
+        if (els.length) {
+          const r = rows[els[0].index];
+          toast(`${r.name}: ROI ${r.roi >= 0 ? '+' : ''}${r.roi.toFixed(1)}% · Invested €${r.invested.toFixed(2)} · Value €${r.marketValue.toFixed(2)}`);
+        }
+      }
+    }
+  });
+
+  // ── Allocation donut — by TYPE ────────────────────────────────────────────
+  if (allocChartInst) allocChartInst.destroy();
+  const types = [...new Set(items.map(i => i.type))];
+  const typeInvested = types.map(t =>
+    items.filter(i => i.type === t).reduce((s, i) => s + i.qty * i.buyPrice, 0)
+  );
+  const total = typeInvested.reduce((s, v) => s + v, 0);
+  allocChartInst = new Chart(document.getElementById('alloc-chart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: types, datasets: [{ data: typeInvested, backgroundColor: PALETTE, borderWidth: 2, borderColor: '#181c25', hoverOffset: 8 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '62%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(24,28,37,0.95)', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+          callbacks: {
+            label: ctx => ` €${ctx.raw.toFixed(2)} (${((ctx.raw / total) * 100).toFixed(1)}%)`
+          }
+        }
+      }
+    }
+  });
+  document.getElementById('alloc-legend').innerHTML = types.map((t, i) =>
+    `<div class="legend-item"><div class="legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></div>${t}s (${((typeInvested[i] / total) * 100).toFixed(1)}%)</div>`
+  ).join('');
+
+  // ── Top 10 by unrealised P/L ──────────────────────────────────────────────
+  if (topPlChartInst) topPlChartInst.destroy();
+  const top10 = [...rows].filter(r => !r.fullySold).sort((a, b) => b.unrealisedPL - a.unrealisedPL).slice(0, 10);
+  topPlChartInst = new Chart(document.getElementById('top-pl-chart').getContext('2d'), {
     type: 'bar',
     data: {
-      labels,
+      labels: top10.map(r => shortLabel(r.name)),
       datasets: [{
-        label: 'ROI %',
-        data: rois,
-        backgroundColor: rois.map(v => v >= 0 ? 'rgba(76,175,125,0.7)' : 'rgba(224,92,92,0.7)'),
-        borderRadius: 4,
+        label: 'Unrealised P/L',
+        data: top10.map(r => parseFloat(r.unrealisedPL.toFixed(2))),
+        backgroundColor: top10.map(r => r.unrealisedPL >= 0 ? 'rgba(76,175,125,0.75)' : 'rgba(224,92,92,0.75)'),
+        borderColor: top10.map(r => r.unrealisedPL >= 0 ? 'rgba(76,175,125,1)' : 'rgba(224,92,92,1)'),
+        borderWidth: 1, borderRadius: 4,
       }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      ...chartOpts(v => (v >= 0 ? '+' : '') + '€' + Math.abs(v).toFixed(0)),
+      indexAxis: 'y',
       scales: {
-        x: { ticks: { color: tickColor, font: { size: 11 }, autoSkip: false, maxRotation: 40 }, grid: { display: false } },
-        y: { ticks: { color: tickColor, callback: v => v + '%', font: { size: 11 } }, grid: { color: gridColor } }
+        x: { ticks: { color: tc, callback: v => (v >= 0 ? '+' : '') + '€' + Math.abs(v).toFixed(0), font: { size: 11 } }, grid: { color: gc } },
+        y: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } }
+      },
+      onClick: (e, els) => {
+        if (els.length) {
+          const r = top10[els[0].index];
+          toast(`${r.name}: ${fmtPL(r.unrealisedPL)} unrealised`);
+        }
       }
     }
   });
 
-  // Alloc donut
-  if (allocChartInst) allocChartInst.destroy();
-  allocChartInst = new Chart(document.getElementById('alloc-chart').getContext('2d'), {
-    type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{ data: invested, backgroundColor: PALETTE, borderWidth: 1, borderColor: '#181c25' }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      cutout: '65%',
-    }
-  });
-
-  const total = invested.reduce((s, v) => s + v, 0);
-  document.getElementById('alloc-legend').innerHTML = labels.map((l, i) =>
-    `<div class="legend-item"><div class="legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></div>${l} (${((invested[i] / total) * 100).toFixed(1)}%)</div>`
-  ).join('');
-
-  // Compare chart
+  // ── Invested vs value — scrollable ────────────────────────────────────────
   if (compareChartInst) compareChartInst.destroy();
-  compareChartInst = new Chart(document.getElementById('compare-chart').getContext('2d'), {
+  const cmpCtx = document.getElementById('compare-chart');
+  cmpCtx.style.height = '240px';
+  compareChartInst = new Chart(cmpCtx.getContext('2d'), {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Invested', data: invested, backgroundColor: 'rgba(91,138,240,0.6)', borderRadius: 3 },
-        { label: 'Market value', data: values, backgroundColor: 'rgba(232,184,75,0.6)', borderRadius: 3 },
-      ]
-    },
+    data: { labels, datasets: [
+      { label: 'Invested', data: invested, backgroundColor: 'rgba(91,138,240,0.65)', borderColor: 'rgba(91,138,240,1)', borderWidth: 1, borderRadius: 3 },
+      { label: 'Market value', data: values, backgroundColor: 'rgba(232,184,75,0.65)', borderColor: 'rgba(232,184,75,1)', borderWidth: 1, borderRadius: 3 },
+    ]},
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: tickColor, font: { size: 11 }, autoSkip: false, maxRotation: 40 }, grid: { display: false } },
-        y: { ticks: { color: tickColor, callback: v => '€' + v, font: { size: 11 } }, grid: { color: gridColor } }
+      ...chartOpts(v => '€' + v),
+      plugins: {
+        ...chartOpts().plugins,
+        legend: { display: true, labels: { color: tc, font: { size: 11 }, boxWidth: 10, padding: 16 } },
+        tooltip: {
+          ...chartOpts().plugins.tooltip,
+          callbacks: {
+            title: ctx => rows[ctx[0].dataIndex]?.name || '',
+            label: ctx => ` ${ctx.dataset.label}: €${ctx.parsed.y.toFixed(2)}`
+          }
+        }
+      },
+      onClick: (e, els) => {
+        if (els.length) {
+          const r = rows[els[0].index];
+          const pl = r.unrealisedPL;
+          toast(`${r.name}: invested €${r.invested.toFixed(2)} · value €${r.marketValue.toFixed(2)} · ${pl >= 0 ? '+' : ''}€${pl.toFixed(2)}`);
+        }
       }
     }
   });
 
-  // Custom legend for compare chart
-  // (appended below the chart card, no need to add separately since items are self-explanatory)
+  // ── Summary cards ─────────────────────────────────────────────────────────
+  const winners = rows.filter(r => r.roi > 0 && !r.fullySold).length;
+  const losers = rows.filter(r => r.roi < 0 && !r.fullySold).length;
+  const bestRoi = rows.filter(r => !r.fullySold).reduce((best, r) => r.roi > (best?.roi ?? -Infinity) ? r : best, null);
+  const worstRoi = rows.filter(r => !r.fullySold).reduce((w, r) => r.roi < (w?.roi ?? Infinity) ? r : w, null);
+  const biggestWin = rows.filter(r => !r.fullySold).reduce((b, r) => r.unrealisedPL > (b?.unrealisedPL ?? -Infinity) ? r : b, null);
+
+  document.getElementById('chart-summary-cards').innerHTML = [
+    { label: 'Winners', value: `${winners}/${rows.filter(r => !r.fullySold).length}`, sub: 'items in profit', color: 'var(--green)' },
+    { label: 'Best ROI', value: bestRoi ? `${bestRoi.roi >= 0 ? '+' : ''}${bestRoi.roi.toFixed(0)}%` : '—', sub: bestRoi ? shortLabel(bestRoi.name) : '', color: 'var(--green)' },
+    { label: 'Worst ROI', value: worstRoi ? `${worstRoi.roi >= 0 ? '+' : ''}${worstRoi.roi.toFixed(0)}%` : '—', sub: worstRoi ? shortLabel(worstRoi.name) : '', color: 'var(--red)' },
+    { label: 'Biggest gain', value: biggestWin ? `+€${biggestWin.unrealisedPL.toFixed(2)}` : '—', sub: biggestWin ? shortLabel(biggestWin.name) : '', color: 'var(--green)' },
+  ].map(c => `<div class="metric-card"><div class="metric-label">${c.label}</div><div class="metric-value mono" style="font-size:18px;color:${c.color}">${c.value}</div><div class="metric-sub">${c.sub}</div></div>`).join('');
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
