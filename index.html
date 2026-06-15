@@ -286,6 +286,44 @@
 // ─── Config ──────────────────────────────────────────────────────────────────
 // Point this to your Render proxy URL
 const PROXY_URL = 'https://cs2-price-proxy.onrender.com';
+
+// ─── Supabase config ──────────────────────────────────────────────────────────
+const SB_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
+const SB_TABLE = 'cs2_portfolio';
+const SB_USER  = 'kris';
+
+async function sbFetch(method, body) {
+  const url = `${SB_URL}/rest/v1/${SB_TABLE}`;
+  const headers = {
+    'apikey': SB_KEY,
+    'Authorization': `Bearer ${SB_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': method === 'POST' ? 'resolution=merge-duplicates,return=minimal' : 'return=minimal',
+  };
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(method === 'GET' ? `${url}?user_id=eq.${SB_USER}&select=items` : url, opts);
+  return res;
+}
+
+async function sbSave() {
+  try {
+    await sbFetch('POST', { user_id: SB_USER, items: items, updated_at: new Date().toISOString() });
+  } catch (e) { console.warn('Supabase save error:', e.message); }
+}
+
+async function sbLoad() {
+  try {
+    const res = await sbFetch('GET');
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data[0] && Array.isArray(data[0].items) && data[0].items.length > 0) {
+      return data[0].items;
+    }
+  } catch (e) { console.warn('Supabase load error:', e.message); }
+  return null;
+}
 const STEAM_FEE = 0.85;
 const LS_KEY = 'cs2_portfolio_v3'; // bumped to reset old data with wrong market prices
 
@@ -327,10 +365,25 @@ let roiChartInst = null, allocChartInst = null, compareChartInst = null;
 const PALETTE = ['#e8b84b','#5b8af0','#4caf7d','#e05c5c','#c08ef0','#f07878','#50c8e0','#a0e070','#f0a050','#7090d0'];
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
-function save() { localStorage.setItem(LS_KEY, JSON.stringify(items)); }
+function save() {
+  localStorage.setItem(LS_KEY, JSON.stringify(items));
+  sbSave(); // persist to Supabase
+}
 function load() {
+  // Try localStorage first for instant display, then sync from Supabase
   try { items = JSON.parse(localStorage.getItem(LS_KEY)) || defaultItems(); }
   catch { items = defaultItems(); }
+}
+
+async function loadFromSupabase() {
+  const sbItems = await sbLoad();
+  if (sbItems) {
+    items = sbItems;
+    localStorage.setItem(LS_KEY, JSON.stringify(items)); // sync back to localStorage
+    render();
+    renderCharts();
+    toast('✓ Loaded from Supabase');
+  }
 }
 function defaultItems() {
   return [
@@ -874,6 +927,8 @@ function resetData() {
 
 load();
 render();
+// Load from Supabase in background — updates if remote has newer data
+loadFromSupabase();
 </script>
 </body>
 </html>
