@@ -287,7 +287,7 @@
 // Point this to your Render proxy URL
 const PROXY_URL = 'https://cs2-price-proxy.onrender.com';
 const STEAM_FEE = 0.85;
-const LS_KEY = 'cs2_portfolio_v2';
+const LS_KEY = 'cs2_portfolio_v3'; // bumped to reset old data with wrong market prices
 
 // ─── Item image helper (uses Steam market icon via name) ──────────────────────
 // Images are fetched from the Steam market listing page icon
@@ -530,12 +530,17 @@ async function fetchOne(idx) {
   try {
     const res = await fetch(`${PROXY_URL}/price?name=${encodeURIComponent(item.name)}`);
     const data = await res.json();
-    if (data.lowest_price != null) {
-      items[idx].marketPrice = data.lowest_price;
+    const USD_TO_EUR = 0.92;
+    let price = null;
+    if (data.lowest_price != null) price = data.lowest_price;
+    else if (data.lowest_price_usd != null) price = parseFloat((data.lowest_price_usd * USD_TO_EUR).toFixed(2));
+
+    if (price != null) {
+      items[idx].marketPrice = price;
       items[idx].priceTs = Date.now();
       save();
       render();
-      toast(`✓ ${item.name}: €${data.lowest_price.toFixed(2)}`);
+      toast(`✓ ${item.name}: €${price.toFixed(2)}`);
     } else {
       toast(`Not found: ${item.name}`, true);
       console.warn('Price response:', data);
@@ -563,10 +568,17 @@ async function refreshAllPrices() {
     const data = await res.json();
 
     let updated = 0, failed = [];
+    // USD/EUR rate — steamapis returns USD, Steam returns EUR
+    // We store prices as EUR. 1 USD ≈ 0.92 EUR (close enough for display)
+    const USD_TO_EUR = 0.92;
     items.forEach(item => {
       const r = data[item.name];
       if (r && r.lowest_price != null) {
-        item.marketPrice = r.lowest_price;
+        item.marketPrice = r.lowest_price; // EUR from Steam
+        item.priceTs = Date.now();
+        updated++;
+      } else if (r && r.lowest_price_usd != null) {
+        item.marketPrice = parseFloat((r.lowest_price_usd * USD_TO_EUR).toFixed(2)); // USD→EUR
         item.priceTs = Date.now();
         updated++;
       } else if (r && r.error) {
