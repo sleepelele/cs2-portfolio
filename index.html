@@ -205,6 +205,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh prices
     </button>
+    <button class="btn edit-only" id="save-btn" onclick="manualSave()" title="Save all changes to Supabase" style="gap:6px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      Save
+    </button>
     <button class="lock-btn" id="lock-btn" onclick="toggleLock()" title="Click to unlock editing">
       <svg id="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       <span id="lock-label">Locked</span>
@@ -511,9 +515,8 @@ async function sbFetch(method, body) {
 }
 
 async function sbSave() {
-  try {
-    await sbFetch('POST', { user_id: SB_USER, items: items, updated_at: new Date().toISOString() });
-  } catch (e) { console.warn('Supabase save error:', e.message); }
+  const res = await sbFetch('POST', { user_id: SB_USER, items: items, updated_at: new Date().toISOString() });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
 }
 
 async function sbLoad() {
@@ -568,9 +571,52 @@ let roiChartInst = null, allocChartInst = null, compareChartInst = null;
 const PALETTE = ['#e8b84b','#5b8af0','#4caf7d','#e05c5c','#c08ef0','#f07878','#50c8e0','#a0e070','#f0a050','#7090d0'];
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
+let hasUnsavedChanges = false;
+
 function save() {
   localStorage.setItem(LS_KEY, JSON.stringify(items));
-  sbSave(); // persist to Supabase
+  markUnsaved();
+  sbSave(); // persist to Supabase (best effort background save)
+}
+
+function markUnsaved() {
+  hasUnsavedChanges = true;
+  const btn = document.getElementById('save-btn');
+  if (btn) {
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+    btn.title = 'Unsaved changes — click to save';
+  }
+}
+
+function markSaved() {
+  hasUnsavedChanges = false;
+  const btn = document.getElementById('save-btn');
+  if (btn) {
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    btn.title = 'All changes saved';
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="20 6 9 17 4 12"/></svg> Saved`;
+    setTimeout(() => {
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save`;
+    }, 2000);
+  }
+}
+
+async function manualSave() {
+  const btn = document.getElementById('save-btn');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Saving…`;
+  btn.disabled = true;
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(items));
+    await sbSave();
+    markSaved();
+    toast('✓ Saved to Supabase');
+  } catch(e) {
+    toast('Save failed — check connection', true);
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save`;
+  }
+  btn.disabled = false;
 }
 
 // ─── Price history — record a snapshot whenever prices are refreshed ──────────
@@ -1914,6 +1960,14 @@ function resetData() {
 load();
 initAuth();
 render();
+
+// Warn on close if there are unsaved changes
+window.addEventListener('beforeunload', e => {
+  if (hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 // Load from Supabase in background — updates if remote has newer data
 loadFromSupabase();
 
