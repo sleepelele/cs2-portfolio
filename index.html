@@ -201,9 +201,12 @@
   <div class="logo">cs2<span>/</span>portfolio</div>
   <div class="topbar-actions">
     <span id="last-updated" style="font-size:11px;color:var(--muted)"></span>
-    <button class="btn" id="refresh-all-btn" onclick="refreshAllPrices()" title="Fetch all Steam prices">
+    <button class="btn edit-only" id="refresh-all-btn" onclick="refreshAllPrices()" title="Fetch all Steam prices">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh prices
+    </button>
+    <button class="btn edit-only" id="fetch-icons-btn" onclick="forceRefetchAllIcons()" title="Re-fetch all item icons">
+      🖼️ Fix icons
     </button>
     <button class="btn edit-only" id="save-btn" onclick="manualSave()" title="Save all changes to Supabase" style="gap:6px">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -1140,6 +1143,34 @@ async function fetchMissingIcons(btn) {
     items.forEach(item => { if (!item.icon && icons[item.name]) item.icon = icons[item.name]; });
     save(); render();
   } catch {}
+}
+
+// Force re-fetch ALL icons, even ones that already have a value — fixes broken/stale URLs
+async function forceRefetchAllIcons() {
+  const btn = document.getElementById('fetch-icons-btn');
+  const allNames = [...new Set(items.map(i => i.name))];
+  btn.disabled = true;
+  btn.textContent = `Fetching 0/${allNames.length}…`;
+  toast(`Re-fetching icons for ${allNames.length} items…`);
+  try {
+    const res = await fetch(`${PROXY_URL}/icons`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: allNames, force: true })
+    });
+    const icons = await res.json();
+    let updated = 0;
+    items.forEach(item => {
+      if (icons[item.name]) { item.icon = icons[item.name]; updated++; }
+    });
+    save();
+    render();
+    toast(`✓ Updated ${updated}/${allNames.length} icons`);
+  } catch (e) {
+    toast(`Icon fetch failed: ${e.message}`, true);
+  }
+  btn.disabled = false;
+  btn.textContent = '🖼️ Fix icons';
 }
 
 // ─── CRUD ──────────────────────────────────────────────────────────────────────
