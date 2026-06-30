@@ -136,8 +136,8 @@
   .empty h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
   .tab-content { display: none; }
   .tab-content.active { display: block; }
-  .delete-btn { opacity: 0; transition: opacity 0.1s; background: none; border: none; color: var(--red); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
-  .edit-btn { opacity: 0; transition: opacity 0.1s; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
+  .delete-btn { opacity: 0.5; transition: opacity 0.1s; background: none; border: none; color: var(--red); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
+  .edit-btn { opacity: 0.5; transition: opacity 0.1s; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size:14px; }
   tr:hover .delete-btn { opacity: 1; }
   tr:hover .edit-btn { opacity: 1; }
   .delete-btn:hover { background: var(--red-dim); color: var(--red); }
@@ -282,7 +282,7 @@
             <th onclick="sortBy('realisedPL')" title="Profit/loss from items already sold">Realised P/L <span class="sort-icon">↕</span></th>
 
             <th onclick="sortBy('purchaseDate')" title="Date added/purchased">Date added <span class="sort-icon">↕</span></th>
-            <th></th>
+            <th class="edit-only" style="position:sticky;right:0;background:var(--surface);box-shadow:-8px 0 8px -8px rgba(0,0,0,0.4)">Edit</th>
           </tr>
         </thead>
         <tbody id="holdings-body"></tbody>
@@ -846,9 +846,9 @@ function render() {
         <td class="mono ${r.realisedPL >= 0 ? 'green' : r.realisedPL < 0 ? 'red' : ''}" style="font-weight:500">${r.qtySold > 0 ? fmtPL(r.realisedPL) : '<span style="color:var(--muted)">—</span>'}</td>
 
         <td class="mono" style="font-size:12px;color:var(--muted);white-space:nowrap">${r.purchaseDate ? new Date(r.purchaseDate).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'2-digit'}) : '—'}</td>
-        <td style="display:flex;gap:4px;align-items:center">
-          <button class="edit-btn" onclick="editItem(${origIdx})" title="Edit item">✎</button>
-          <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete">✕</button>
+        <td class="edit-only" style="display:flex;gap:4px;align-items:center;position:sticky;right:0;background:var(--surface);box-shadow:-8px 0 8px -8px rgba(0,0,0,0.4)">
+          <button class="edit-btn" onclick="editItem(${origIdx})" title="Edit item" style="opacity:1">✎</button>
+          <button class="delete-btn" onclick="deleteItem(${origIdx})" title="Delete" style="opacity:1">✕</button>
         </td>
       </tr>`;
     }).join('');
